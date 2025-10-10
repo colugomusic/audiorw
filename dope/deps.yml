@@ -1,0 +1,14 @@
+- name:                ads
+  git:                 https://github.com/colugomusic/ads.git
+
+- name:                wavpack
+  url:                 https://github.com/dbry/WavPack/archive/refs/tags/5.8.1.zip
+  src_subdir:          WavPack-5.8.1
+  build-type:          cmake
+  cmake-options:       -DWAVPACK_BUILD_PROGRAMS=OFF
+
+- name:                miniaudio
+  url:                 https://github.com/mackron/miniaudio/archive/refs/tags/0.11.22.zip
+  src_subdir:          miniaudio-0.11.22
+  build-type:          cmake
+  add-src-files:       true
