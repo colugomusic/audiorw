@@ -1,6 +1,12 @@
 - name:                ads
   git:                 https://github.com/colugomusic/ads.git
 
+- name:                Boost
+  url:                 https://github.com/boostorg/boost/releases/download/boost-1.86.0/boost-1.86.0-cmake.zip
+  src_subdir:          boost-1.86.0
+  build-type:          cmake
+  cmake-options-mac:   -DBOOST_CONTEXT_ABI=sysv -DBOOST_CONTEXT_ARCHITECTURE=combined
+
 - name:                wavpack
   url:                 https://github.com/dbry/WavPack/archive/refs/tags/5.8.1.zip
   src_subdir:          WavPack-5.8.1

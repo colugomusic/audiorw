@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.30)
 project(audiorw)
 find_package(ads REQUIRED)
+find_package(Boost REQUIRED COMPONENTS headers CONFIG)
 find_package(miniaudio REQUIRED)
 find_package(wavpack REQUIRED)
 add_library(audiorw)
@@ -15,8 +16,14 @@ target_sources(audiorw PUBLIC
 target_sources(audiorw PRIVATE
 	src/audiorw.cpp
 )
-target_link_libraries(audiorw PUBLIC ads::ads WavPack::WavPack)
-target_link_libraries(audiorw PRIVATE $<BUILD_INTERFACE:miniaudio::miniaudio>)
+target_link_libraries(audiorw PUBLIC
+	ads::ads
+	Boost::headers
+	WavPack::WavPack
+)
+target_link_libraries(audiorw PRIVATE
+	$<BUILD_INTERFACE:miniaudio::miniaudio>
+)
 target_compile_definitions(audiorw PRIVATE
 	# MA_NO_AAUDIO
 	# MA_NO_ALSA
