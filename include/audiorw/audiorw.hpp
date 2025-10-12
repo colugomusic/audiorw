@@ -332,6 +332,7 @@ auto try_read(std::filesystem::path path, audiorw::format format, concepts::shou
 [[nodiscard]] auto make_format_hint(const std::filesystem::path& file_path, bool try_all = false) -> format_hint;
 [[nodiscard]] auto open(const std::filesystem::path& file_path, audiorw::format_hint hint) -> streamer;
 
+[[nodiscard]]
 auto read(std::filesystem::path path, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	const auto formats_to_try = detail::get_formats_to_try(hint);
 	for (auto format : formats_to_try) {
@@ -342,6 +343,7 @@ auto read(std::filesystem::path path, audiorw::format_hint hint, concepts::shoul
 	throw std::runtime_error{"Invalid audio format"};
 }
 
+[[nodiscard]] inline
 auto read(std::filesystem::path path, audiorw::format_hint hint) -> std::optional<item> {
 	return read(path, hint, []{ return false; });
 }
@@ -353,6 +355,7 @@ auto write(const audiorw::item& item, std::filesystem::path path, storage_type t
 	}
 }
 
+inline
 auto write(const audiorw::item& item, std::filesystem::path path, storage_type type) -> void {
 	return write(item, std::move(path), type, []{ return false; });
 }
