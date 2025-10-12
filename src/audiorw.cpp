@@ -366,7 +366,7 @@ auto make_wavpack_config(audiorw::header header, storage_type type) -> WavpackCo
 	return config;
 }
 
-auto wavpack_write_blockout(void* puserdata, void* data, int64_t bcount) -> int {
+auto wavpack_write_blockout(void* puserdata, void* data, int32_t bcount) -> int {
 	auto& writer = *reinterpret_cast<atomic_file_writer*>(puserdata);
 	const auto char_data = reinterpret_cast<const char*>(data);
 	writer.stream().write(char_data, bcount);

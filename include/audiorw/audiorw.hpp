@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ads.hpp>
+#include <algorithm>
 #include <boost/container/small_vector.hpp>
 #include <filesystem>
 #include <fstream>
@@ -142,7 +143,7 @@ enum class wavpack_chunk_write_result { aborted, succeeded };
 [[nodiscard]] auto to_std_origin(ma_seek_origin) -> std::ios_base::seekdir;
 [[nodiscard]] auto make_wavpack_config(audiorw::header header, storage_type type) -> WavpackConfig;
 [[nodiscard]] auto make_wavpack_stream_reader() -> WavpackStreamReader64;
-[[nodiscard]] auto wavpack_write_blockout(void* puserdata, void* data, int64_t bcount) -> int;
+[[nodiscard]] auto wavpack_write_blockout(void* puserdata, void* data, int32_t bcount) -> int;
 auto ma_on_read(ma_decoder* decoder, void* buffer, size_t bytes_to_read, size_t* bytes_read) -> ma_result;
 auto ma_on_seek(ma_decoder* decoder, ma_int64 offset, ma_seek_origin origin) -> ma_result;
 auto wavpack_write_float_chunk(WavpackContext* context, ads::interleaved<float>* frames, size_t chunk_size) -> void;
@@ -171,7 +172,7 @@ auto ma_write(const audiorw::item& item, std::filesystem::path path, storage_typ
 		if (should_abort()) {
 			return;
 		}
-		const auto chunk_size     = std::min(frames_remaining, CHUNK_SIZE);
+		const auto chunk_size     = std::min(frames_remaining.value, uint64_t(CHUNK_SIZE));
 		const auto frames_written = encoder.write_pcm_frames(interleaved_frames.data() + pos, chunk_size);
 		frames_remaining -= frames_written;
 		pos              += frames_written;
@@ -189,7 +190,7 @@ auto wavpack_write_float_chunks(WavpackContext* context, const audiorw::item& it
 		if (should_abort()) {
 			return wavpack_chunk_write_result::aborted;
 		}
-		const auto chunk_size = std::min(CHUNK_SIZE, frames_remaining);
+		const auto chunk_size = std::min(uint64_t(CHUNK_SIZE), frames_remaining.value);
 		wavpack_write_float_chunk(context, &interleaved_frames, chunk_size);
 		frames_remaining -= chunk_size;
 		pos              += chunk_size;
@@ -208,7 +209,7 @@ auto wavpack_write_int_chunks(WavpackContext* context, const audiorw::item& item
 		if (should_abort()) {
 			return wavpack_chunk_write_result::aborted;
 		}
-		const auto chunk_size = std::min(CHUNK_SIZE, frames_remaining);
+		const auto chunk_size = std::min(uint64_t(CHUNK_SIZE), frames_remaining.value);
 		wavpack_write_int_chunk(context, item.header.channel_count, int_scale, &interleaved_frames, chunk_size);
 		frames_remaining -= chunk_size;
 		pos              += chunk_size;
@@ -228,8 +229,7 @@ auto wavpack_write_chunks(WavpackContext* context, const audiorw::item& item, st
 
 auto wavpack_write(const audiorw::item& item, std::filesystem::path path, storage_type type, concepts::should_abort_fn auto should_abort) -> void {
 	auto file_writer = atomic_file_writer{path};
-	auto blockout = [](void* puserdata, void* data, int64_t bcount) -> int { return wavpack_write_blockout(puserdata, data, bcount); };
-	auto writer = scope_wavpack_writer{item.header, type, blockout, &file_writer};
+	auto writer = scope_wavpack_writer{item.header, type, wavpack_write_blockout, &file_writer};
 	if (wavpack_write_chunks(writer.context(), item, type, should_abort) == wavpack_chunk_write_result::succeeded) {
 		if (!WavpackFlushSamples(writer.context())) {
 			throw std::runtime_error("Write error");
@@ -251,7 +251,7 @@ auto ma_try_read(audiorw::format format, ma_decoder_read_proc on_read, ma_decode
 		if (should_abort()) {
 			return std::nullopt;
 		}
-		const auto chunk_size  = std::min(frames_remaining, CHUNK_SIZE);
+		const auto chunk_size  = std::min(frames_remaining.value, uint64_t(CHUNK_SIZE));
 		const auto frames_read = decoder.read_pcm_frames(interleaved_frames.data() + pos, chunk_size);
 		frames_remaining -= frames_read;
 		pos              += frames_read;
@@ -262,7 +262,7 @@ auto ma_try_read(audiorw::format format, ma_decoder_read_proc on_read, ma_decode
 
 auto ma_try_read(const std::filesystem::path& path, audiorw::format format, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	auto file = std::ifstream{path, std::ios::binary};
-	try         { return ma_try_read(ma_on_read, ma_on_seek, &file, should_abort); }
+	try         { return ma_try_read(format, ma_on_read, ma_on_seek, &file, should_abort); }
 	catch (...) { return std::nullopt; }
 }
 
@@ -275,8 +275,8 @@ auto wavpack_read_float_chunks(WavpackContext* context, const audiorw::header& h
 		}
 		auto buffer_pos     = buffer->data() + pos;
 		auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer_pos);
-		const auto chunk_size  = std::min(frames_remaining, CHUNK_SIZE);
-		const auto frames_read = WavpackUnpacksamples(context, buffer_as_ints, chunk_size);
+		const auto chunk_size  = std::min(frames_remaining.value, uint64_t(CHUNK_SIZE));
+		const auto frames_read = WavpackUnpackSamples(context, buffer_as_ints, chunk_size);
 		frames_remaining -= frames_read;
 		pos              += frames_read;
 	}
@@ -294,8 +294,8 @@ auto wavpack_read_int_chunks(WavpackContext* context, const audiorw::header& hea
 		}
 		auto buffer_pos = buffer->data() + pos;
 		auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer_pos);
-		const auto chunk_size  = std::min(frames_remaining, CHUNK_SIZE);
-		const auto frames_read = WavpackUnpacksamples(context, buffer_as_ints, chunk_size);
+		const auto chunk_size  = std::min(frames_remaining.value, uint64_t(CHUNK_SIZE));
+		const auto frames_read = WavpackUnpackSamples(context, buffer_as_ints, chunk_size);
 		for (auto i = 0; i < frames_read * header.channel_count.value; i++) {
 			buffer_pos[i] = static_cast<float>(buffer_as_ints[i]) / divisor;
 		}
