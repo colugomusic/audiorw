@@ -1,5 +1,9 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+find_dependency(ads)
+find_dependency(Boost)
+find_dependency(miniaudio)
+find_dependency(wavpack)
 
 include("${CMAKE_CURRENT_LIST_DIR}/audiorw-targets.cmake")
