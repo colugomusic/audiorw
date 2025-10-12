@@ -69,6 +69,8 @@ struct item {
 
 struct streamer {
 	streamer(const std::filesystem::path& path, format_hint hint);
+	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
+    auto get_header() const -> header;
 	auto read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
@@ -98,6 +100,7 @@ private:
 struct scope_ma_decoder {
 	scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data);
 	~scope_ma_decoder();
+    auto get_header() const -> header;
     auto get_header(audiorw::format format) const -> header;
 	auto read_pcm_frames(void* frames, ma_uint64 frame_count) -> ma_uint64;
 	auto seek_to_pcm_frame(ma_uint64 frame) -> ma_result;

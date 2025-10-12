@@ -1,4 +1,7 @@
+#define NOMINMAX
+#define MINIAUDIO_IMPLEMENTATION
 #include "audiorw.hpp"
+#include "miniaudio.h"
 #include <variant>
 
 namespace audiorw::detail {
@@ -40,6 +43,14 @@ auto get_bit_depth(ma_format format) -> int {
 auto make_tmp_file_path(std::filesystem::path path) -> std::filesystem::path {
 	path += ".tmp";
 	return path;
+}
+
+[[nodiscard]] static
+auto get_format(const ma_decoder& decoder) -> format {
+	if (decoder.pBackendVTable == &g_ma_decoding_backend_vtable_flac ) { return format::flac; }
+	if (decoder.pBackendVTable == &g_ma_decoding_backend_vtable_mp3)   { return format::mp3; }
+	if (decoder.pBackendVTable == &g_ma_decoding_backend_vtable_wav)   { return format::wav; }
+	throw std::runtime_error{"Invalid audio format"};
 }
 
 atomic_file_writer::atomic_file_writer(const std::filesystem::path& path)
@@ -101,6 +112,10 @@ auto scope_ma_decoder::get_header(audiorw::format format) const -> header {
 	out.channel_count = {dec_channels};
 	out.frame_count   = {dec_length};
 	return out;
+}
+
+auto scope_ma_decoder::get_header() const -> header {
+	return get_header(get_format(decoder_));
 }
 
 auto scope_ma_decoder::read_pcm_frames(void* frames, ma_uint64 frame_count) -> ma_uint64 {
@@ -204,6 +219,11 @@ auto stream_open(std::ifstream* file, format_hint hint) -> stream {
 }
 
 [[nodiscard]] static
+auto get_header(scope_ma_decoder* stream) -> header {
+	return stream->get_header();
+}
+
+[[nodiscard]] static
 auto stream_read_frames(scope_ma_decoder* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
 	return {stream->read_pcm_frames(buffer, frames_to_read.value)};
 }
@@ -233,6 +253,11 @@ auto stream_read_int_frames(scope_wavpack_reader* stream, float* buffer, ads::fr
 }
 
 [[nodiscard]] static
+auto get_header(scope_wavpack_reader* stream) -> header {
+	return stream->get_header();
+}
+
+[[nodiscard]] static
 auto stream_read_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
 	const auto float_mode = (stream->mode() & MODE_FLOAT) == MODE_FLOAT;
 	if (float_mode) { return stream_read_float_frames(stream, buffer, frames_to_read); }
@@ -246,6 +271,7 @@ auto stream_seek(scope_wavpack_reader* stream, ads::frame_idx pos) -> bool {
 
 struct streamer_impl {
 	streamer_impl(const std::filesystem::path& path, format_hint hint);
+    auto get_header() -> header;
 	auto read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
@@ -257,6 +283,10 @@ streamer_impl::streamer_impl(const std::filesystem::path& path, format_hint hint
 	: file_{path, std::ios::binary}
 	, stream_{stream_open(&file_, hint)}
 {
+}
+
+auto streamer_impl::get_header() -> header {
+	return std::visit([](auto& stream){ return detail::get_header(&stream); }, stream_);
 }
 
 auto streamer_impl::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
@@ -452,6 +482,10 @@ namespace audiorw {
 streamer::streamer(const std::filesystem::path& path, format_hint hint)
     : impl_{std::make_unique<detail::streamer_impl>(path, hint)}
 {
+}
+
+auto streamer::get_header() const -> header {
+    return impl_->get_header();
 }
 
 auto streamer::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
