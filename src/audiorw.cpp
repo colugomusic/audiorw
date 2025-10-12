@@ -485,6 +485,8 @@ streamer::streamer(const std::filesystem::path& path, format_hint hint)
 }
 
 streamer::~streamer() = default;
+streamer& streamer::operator=(streamer&&) noexcept = default;
+streamer::streamer(streamer&&) noexcept = default;
 
 auto streamer::get_header() const -> header {
     return impl_->get_header();
