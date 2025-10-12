@@ -123,6 +123,19 @@ scope_wavpack_reader::~scope_wavpack_reader() {
 	WavpackCloseFile(context_);
 }
 
+auto scope_wavpack_reader::get_header() const -> header {
+	header h;
+	h.format        = format::wavpack;
+	h.bit_depth     = WavpackGetBitsPerSample(context_);
+	h.channel_count = {static_cast<uint64_t>(WavpackGetNumChannels(context_))};
+	h.frame_count   = {static_cast<uint64_t>(WavpackGetNumSamples64(context_))};
+	h.SR            = WavpackGetSampleRate(context_);
+    return h;
+}
+
+auto scope_wavpack_reader::read_samples(float* buffer, size_t frame_count, int mode) -> void {
+}
+
 scope_wavpack_writer::scope_wavpack_writer(audiorw::header header, storage_type type, WavpackBlockOutput blockout, void* user_data)
 	: context_{WavpackOpenFileOutput(blockout, user_data, nullptr)}
 {
@@ -201,20 +214,14 @@ auto to_std_origin(ma_seek_origin origin) -> std::ios_base::seekdir {
 	}
 }
 
-// TODO: delete
-// auto read_file_bytes(const std::filesystem::path& path) -> std::vector<std::byte> {
-// 	auto file = std::ifstream{path, std::ios::binary | std::ios::ate};
-// 	if (!file) {
-// 		throw std::runtime_error{"Failed to open file"};
-// 	}
-// 	auto size = file.tellg();
-// 	file.seekg(0, std::ios::beg);
-// 	auto buffer = std::vector<std::byte>{static_cast<size_t>(size)};
-// 	if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
-// 		throw std::runtime_error{"Error reading file data"};
-// 	}
-// 	return buffer;
-// }
+auto wavpack_to_std_origin(int mode) -> std::ios_base::seekdir {
+	switch (mode) {
+		case SEEK_SET: { return std::ios_base::beg; }
+		case SEEK_CUR: { return std::ios_base::cur; }
+		case SEEK_END: { return std::ios_base::end; }
+		default:       { throw std::runtime_error{"Invalid seek mode"}; }
+	}
+}
 
 auto wavpack_write_float_chunk(WavpackContext* context, ads::interleaved<float>* frames, size_t chunk_size) -> void {
 	if (!WavpackPackSamples(context, reinterpret_cast<int32_t*>(frames->data()), chunk_size)) {
@@ -253,48 +260,44 @@ auto wavpack_write_blockout(void* puserdata, void* data, int64_t bcount) -> int 
 auto make_wavpack_stream_reader() -> WavpackStreamReader64 {
 	WavpackStreamReader64 sr;
 	sr.can_seek = [](void* puserdata) -> int {
-		return puserdata != nullptr;
+		if (!puserdata) return 0;
+		const auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
+		return user_data.file.fail() ? 0 : 1;
 	};
 	sr.close = [](void* puserdata) -> int {
-		return true;
+		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
+		user_data.file.close();
+		return 1;
 	};
 	sr.get_length = [](void* puserdata) -> int64_t {
 		const auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		return user_data.bytes->size();
+		return user_data.length;
 	};
 	sr.get_pos = [](void* puserdata) -> int64_t {
-		const auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		return user_data.pos;
+		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
+		return user_data.file.tellg();
 	};
 	sr.push_back_byte = [](void* puserdata, int c) -> int {
 		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		user_data.pos--;
-		return c;
+		user_data.file.putback(c);
+		return user_data.file.fail() ? 0 : c;
 	};
 	sr.read_bytes = [](void* puserdata, void* data, int32_t bcount) -> int32_t {
-		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		auto bytes_data = reinterpret_cast<std::byte*>(data);
 		if (bcount < 1) return 0;
-		const auto bytes_to_read = std::min(static_cast<size_t>(bcount), user_data.bytes->size() - user_data.pos);
-		const auto beg = user_data.bytes->data() + user_data.pos;
-		const auto end = beg + bytes_to_read;
-		std::copy(beg, end, bytes_data);
-		user_data.pos += bytes_to_read;
-		return bytes_to_read;
+		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
+		auto char_data = reinterpret_cast<char*>(data);
+		user_data.file.read(char_data, bcount);
+		return user_data.file.fail() ? 0 : user_data.file.gcount();
 	};
 	sr.set_pos_abs = [](void* puserdata, int64_t pos) -> int {
 		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		user_data.pos = pos;
+		user_data.file.seekg(pos, std::ios_base::beg);
 		return 0;
 	};
 	sr.set_pos_rel = [](void* puserdata, int64_t delta, int mode) -> int {
 		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		switch (mode) {
-			case SEEK_SET: { user_data.pos = delta; return 0; }
-			case SEEK_CUR: { user_data.pos += delta; return 0; }
-			case SEEK_END: { user_data.pos = user_data.bytes->size() + delta; return 0; }
-			default:       { throw std::runtime_error{"Invalid seek mode"}; }
-		}
+		user_data.file.seekg(delta, wavpack_to_std_origin(mode));
+		return 0;
 	};
 	return sr;
 }

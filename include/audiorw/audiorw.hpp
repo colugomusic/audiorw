@@ -100,6 +100,8 @@ private:
 struct scope_wavpack_reader {
 	scope_wavpack_reader(WavpackStreamReader64* stream, void* user_data);
 	~scope_wavpack_reader();
+    auto get_header() const -> header;
+	auto read_samples(float* buffer, size_t frame_count, int mode) -> void;
 	auto context() { return context_; }
 private:
 	WavpackContext* context_;
@@ -114,9 +116,8 @@ private:
 };
 
 struct ma_read_user_data_t {
-	// TODO: don't do this. use ifstream instead
-	const std::vector<std::byte>* bytes;
-	ma_int64 pos = 0;
+	std::ifstream file;
+	size_t length = 0;
 };
 
 struct ma_write_user_data_t {
@@ -124,15 +125,15 @@ struct ma_write_user_data_t {
 };
 
 struct wavpack_read_user_data_t {
-	// TODO: don't do this. use ifstream instead
-	const std::vector<std::byte>* bytes;
-	int64_t pos = 0;
+	std::ifstream file;
+	size_t length = 0;
 };
 
 struct wavpack_write_user_data_t {
 	atomic_file_writer file;
 };
 
+enum class wavpack_chunks_read_result { aborted, succeeded };
 enum class wavpack_chunk_write_result { aborted, succeeded };
 
 [[nodiscard]] auto get_formats_to_try(format_hint hint) -> formats_to_try;
@@ -259,81 +260,90 @@ auto ma_try_read(audiorw::format format, ma_decoder_read_proc on_read, ma_decode
 	return item;
 }
 
-auto ma_try_read(const std::vector<std::byte>& bytes, audiorw::format format, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
+auto ma_try_read(const std::filesystem::path& path, audiorw::format format, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	auto user_data = ma_read_user_data_t{};
-	user_data.bytes = &bytes;
+	user_data.file = std::ifstream{path, std::ios::binary | std::ios::ate};
+	user_data.length = user_data.file.tellg();
+	user_data.file.seekg(0, std::ios::beg);
 	auto on_read = [](ma_decoder* decoder, void* buffer, size_t bytes_to_read, size_t* bytes_read) -> ma_result {
 		auto& user_data = *reinterpret_cast<ma_read_user_data_t*>(decoder->pUserData);
-		const auto byte_data = reinterpret_cast<std::byte*>(buffer);
-		const auto bytes_available = user_data.bytes->size() - user_data.pos;
-		bytes_to_read = std::min(bytes_available, bytes_to_read);
-		const auto beg = user_data.bytes->data() + user_data.pos;
-		const auto end = beg + bytes_to_read;
-		std::copy(beg, end, byte_data);
-		user_data.pos += bytes_to_read;
-		*bytes_read = bytes_to_read;
-		return MA_SUCCESS;
+		const auto char_data = reinterpret_cast<char*>(buffer);
+		user_data.file.read(char_data, bytes_to_read);
+		*bytes_read = user_data.file.gcount();
+		return user_data.file.fail() ? MA_ERROR : MA_SUCCESS;
 	};
 	auto on_seek = [](ma_decoder* decoder, ma_int64 offset, ma_seek_origin origin) -> ma_result {
 		auto& user_data = *reinterpret_cast<ma_read_user_data_t*>(decoder->pUserData);
-		switch (origin) {
-			case ma_seek_origin_start:   { user_data.pos = offset; return MA_SUCCESS; }
-			case ma_seek_origin_current: { user_data.pos += offset; return MA_SUCCESS; }
-			default:                     { throw std::runtime_error{"Invalid decoder seek origin"}; }
-		}
+		user_data.file.seekg(offset, to_std_origin(origin));
+		return user_data.file.fail() ? MA_ERROR : MA_SUCCESS;
 	};
 	try         { return ma_try_read(on_read, on_seek, user_data, should_abort); }
 	catch (...) { return std::nullopt; }
 }
 
-auto wavpack_read(const std::vector<std::byte>& bytes, concepts::should_abort_fn auto should_abort) -> item {
+auto wavpack_read_float_chunks(WavpackContext* context, const audiorw::header& header, ads::interleaved<float>* buffer, concepts::should_abort_fn auto should_abort) -> wavpack_chunks_read_result {
+	auto frames_remaining = header.frame_count;
+	auto pos              = 0;
+	while (frames_remaining > 0UL) {
+		if (should_abort()) {
+			return wavpack_chunks_read_result::aborted;
+		}
+		auto buffer_pos     = buffer->data() + pos;
+		auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer_pos);
+		const auto chunk_size  = std::min(frames_remaining, CHUNK_SIZE);
+		const auto frames_read = WavpackUnpacksamples(context, buffer_as_ints, chunk_size);
+		frames_remaining -= frames_read;
+		pos              += frames_read;
+	}
+	return wavpack_chunks_read_result::succeeded;
+}
+
+auto wavpack_read_int_chunks(WavpackContext* context, const audiorw::header& header, ads::interleaved<float>* buffer, concepts::should_abort_fn auto should_abort) -> wavpack_chunks_read_result {
+	const auto divisor    = (1 << (header.bit_depth - 1)) - 1;
+	auto int_sample_buf   = std::vector<int32_t>{};
+	auto frames_remaining = header.frame_count;
+	auto pos              = 0;
+	while (frames_remaining > 0UL) {
+		if (should_abort()) {
+			return wavpack_chunks_read_result::aborted;
+		}
+		auto buffer_pos = buffer->data() + pos;
+		const auto chunk_size  = std::min(frames_remaining, CHUNK_SIZE);
+		int_sample_buf.resize(header.channel_count.value * chunk_size);
+		const auto frames_read = WavpackUnpacksamples(context, int_sample_buf.data(), chunk_size);
+		int_sample_buf.resize(header.channel_count.value * frames_read);
+		for (auto i = 0; i < int_sample_buf.size(); i++) {
+			buffer_pos[i] = static_cast<float>(int_sample_buf[i]) / divisor;
+		}
+		frames_remaining -= frames_read;
+		pos              += frames_read;
+	}
+	return wavpack_chunks_read_result::succeeded;
+}
+
+auto wavpack_read(const std::filesystem::path& path, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	auto user_data = wavpack_read_user_data_t{};
-	user_data.bytes = &bytes;
+	user_data.file = std::ifstream{path, std::ios::binary | std::ios::ate};
+	user_data.length = user_data.file.tellg();
+	user_data.file.seekg(0, std::ios::beg);
 	auto stream = make_wavpack_stream_reader();
-	auto writer = scope_wavpack_reader{&stream, &user_data};
-	/*
-	frame_size_ = sizeof(float);
-	num_channels_ = WavpackGetNumChannels(context_);
-	num_frames_ = uint64_t(WavpackGetNumSamples64(context_));
-	sample_rate_ = WavpackGetSampleRate(context_);
-	bit_depth_ = WavpackGetBitsPerSample(context_);
-
-	const auto mode = WavpackGetMode(context_);
-
-	if ((mode & MODE_FLOAT) == MODE_FLOAT)
-	{
-		chunk_reader_ = [this](float* buffer, uint32_t read_size)
-		{
-			return WavpackUnpackSamples(context_, reinterpret_cast<int32_t*>(buffer), read_size);
-		};
-	}
-	else
-	{
-		chunk_reader_ = [this](float* buffer, uint32_t read_size)
-		{
-			const auto divisor = (1 << (bit_depth_ - 1)) - 1;
-
-			unpacked_samples_buffer_.resize(size_t(num_channels_) * read_size);
-
-			const auto frames_read = WavpackUnpackSamples(context_, unpacked_samples_buffer_.data(), read_size);
-
-			unpacked_samples_buffer_.resize(frames_read * num_channels_);
-
-			for (uint32_t i = 0; i < frames_read * num_channels_; i++)
-			{
-				buffer[i] = float(unpacked_samples_buffer_[i]) / divisor;
-			}
-
-			return frames_read;
-		};
-	}
-	*/
+	auto reader = scope_wavpack_reader{&stream, &user_data};
+	auto item   = audiorw::item{};
+	item.header = reader.get_header();
+	item.frames = ads::make<float>(item.header.channel_count, item.header.frame_count);
+	auto interleaved_frames = ads::interleaved<float>{item.header.channel_count, item.header.frame_count};
+	const auto mode = WavpackGetMode(reader.context());
+	const auto float_mode = (mode & MODE_FLOAT) == MODE_FLOAT;
+	if (float_mode) { wavpack_read_float_chunks(reader.context(), item.header, &interleaved_frames, should_abort); }
+	else            { wavpack_read_int_chunks(reader.context(), item.header, &interleaved_frames, should_abort); }
+	ads::deinterleave(interleaved_frames, item.frames.begin());
+	return item;
 }
 
 auto try_read(std::filesystem::path path, audiorw::format format, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	switch (format) {
-		case format::wavpack: { return detail::wavpack_read(read_file_bytes(path), should_abort); }
-		default:              { return detail::ma_try_read(read_file_bytes(path), format, should_abort); }
+		case format::wavpack: { return detail::wavpack_read(path, should_abort); }
+		default:              { return detail::ma_try_read(path, format, should_abort); }
 	}
 }
 
@@ -341,7 +351,7 @@ auto try_read(std::filesystem::path path, audiorw::format format, concepts::shou
 
 [[nodiscard]] auto make_format_hint(const std::filesystem::path& file_path) -> format_hint;
 
-auto read(std::filesystem::path path, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> item {
+auto read(std::filesystem::path path, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	auto formats_to_try = detail::get_formats_to_try(hint);
 	for (auto format : formats_to_try) {
 		if (auto item = detail::try_read(path, format, should_abort)) {
