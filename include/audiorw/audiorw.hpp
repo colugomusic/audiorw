@@ -342,11 +342,19 @@ auto read(std::filesystem::path path, audiorw::format_hint hint, concepts::shoul
 	throw std::runtime_error{"Invalid audio format"};
 }
 
+auto read(std::filesystem::path path, audiorw::format_hint hint) -> std::optional<item> {
+	return read(path, hint, []{ return false; });
+}
+
 auto write(const audiorw::item& item, std::filesystem::path path, storage_type type, concepts::should_abort_fn auto should_abort) -> void {
 	switch (item.header.format) {
-		case format::wavpack: { detail::wavpack_write(item, path, type, should_abort); return; }
-		default:              { detail::ma_write(item, path, type, should_abort); return; }
+		case format::wavpack: { detail::wavpack_write(item, std::move(path), type, std::move(should_abort)); return; }
+		default:              { detail::ma_write(item, std::move(path), type, std::move(should_abort)); return; }
 	}
+}
+
+auto write(const audiorw::item& item, std::filesystem::path path, storage_type type) -> void {
+	return write(item, std::move(path), type, []{ return false; });
 }
 
 } // audiorw
