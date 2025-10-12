@@ -22,24 +22,24 @@ target_link_libraries(audiorw PUBLIC
 	miniaudio::miniaudio
 	WavPack::WavPack
 )
-target_compile_definitions(audiorw PRIVATE
-	# MA_NO_AAUDIO
-	# MA_NO_ALSA
-	# MA_NO_AUDIO4
-	# MA_NO_COREAUDIO
-	# MA_NO_DEVICE_IO
-	# MA_NO_DSOUND
-	# MA_NO_GENERATION
-	# MA_NO_JACK
-	# MA_NO_NULL
-	# MA_NO_OPENSL
-	# MA_NO_OSS
-	# MA_NO_PULSEAUDIO
-	# MA_NO_SNDIO
-	# MA_NO_THREADING
-	# MA_NO_WASAPI
-	# MA_NO_WEBAUDIO
-	# MA_NO_WINMM
+target_compile_definitions(audiorw PUBLIC
+	MA_NO_AAUDIO
+	MA_NO_ALSA
+	MA_NO_AUDIO4
+	MA_NO_COREAUDIO
+	MA_NO_DEVICE_IO
+	MA_NO_DSOUND
+	MA_NO_GENERATION
+	MA_NO_JACK
+	MA_NO_NULL
+	MA_NO_OPENSL
+	MA_NO_OSS
+	MA_NO_PULSEAUDIO
+	MA_NO_SNDIO
+	MA_NO_THREADING
+	MA_NO_WASAPI
+	MA_NO_WEBAUDIO
+	MA_NO_WINMM
 )
 include(CMakePackageConfigHelpers)
 install(TARGETS audiorw EXPORT audiorw-targets FILE_SET HEADERS DESTINATION include/audiorw)
