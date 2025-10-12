@@ -19,10 +19,8 @@ target_sources(audiorw PRIVATE
 target_link_libraries(audiorw PUBLIC
 	ads::ads
 	Boost::headers
+	miniaudio::miniaudio
 	WavPack::WavPack
-)
-target_link_libraries(audiorw PRIVATE
-	$<BUILD_INTERFACE:miniaudio::miniaudio>
 )
 target_compile_definitions(audiorw PRIVATE
 	# MA_NO_AAUDIO
