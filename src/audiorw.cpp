@@ -484,6 +484,8 @@ streamer::streamer(const std::filesystem::path& path, format_hint hint)
 {
 }
 
+streamer::~streamer() = default;
+
 auto streamer::get_header() const -> header {
     return impl_->get_header();
 }
