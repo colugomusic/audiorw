@@ -496,12 +496,12 @@ auto streamer::seek(ads::frame_idx pos) -> bool {
     return impl_->seek(pos);
 }
 
-auto make_format_hint(const std::filesystem::path& file_path, bool try_all) -> format_hint {
+auto make_format_hint(const std::filesystem::path& file_path, bool try_all) -> std::optional<format_hint> {
     const auto ext = file_path.extension();
     if (const auto info = detail::find_format_info(ext.string())) {
         return try_all ? info->hint_all : info->hint_only;
     }
-    return format_hint::try_wav_only;
+    return std::nullopt;
 }
 
 } // audiorw
