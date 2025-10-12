@@ -336,7 +336,6 @@ auto try_read(std::filesystem::path path, audiorw::format format, concepts::shou
 } // detail
 
 [[nodiscard]] auto make_format_hint(const std::filesystem::path& file_path, bool try_all = false) -> std::optional<format_hint>;
-[[nodiscard]] auto open(const std::filesystem::path& file_path, audiorw::format_hint hint) -> streamer;
 
 [[nodiscard]]
 auto read(std::filesystem::path path, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
