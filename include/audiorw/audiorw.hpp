@@ -2,10 +2,10 @@
 
 #include <ads.hpp>
 #include <boost/container/small_vector.hpp>
-#include <corecrt_wio.h>
 #include <filesystem>
 #include <fstream>
 #include <miniaudio.h>
+#include <stdexcept>
 #include <wavpack.h>
 
 namespace audiorw::concepts {
@@ -349,7 +349,7 @@ auto try_read(std::filesystem::path path, audiorw::format format, concepts::shou
 
 } // detail
 
-[[nodiscard]] auto make_format_hint(const std::filesystem::path& file_path) -> format_hint;
+[[nodiscard]] auto make_format_hint(const std::filesystem::path& file_path, bool try_all = false) -> format_hint;
 
 auto read(std::filesystem::path path, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	auto formats_to_try = detail::get_formats_to_try(hint);

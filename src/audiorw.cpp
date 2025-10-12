@@ -1,9 +1,27 @@
 #include "audiorw.hpp"
-#include <ads-vocab.hpp>
-#include <stdexcept>
-#include <wavpack.h>
 
 namespace audiorw::detail {
+
+struct format_info {
+    audiorw::format format;
+    std::string_view ext;
+    audiorw::format_hint hint_only;
+    audiorw::format_hint hint_all;
+};
+
+using format_info_table = std::array<format_info, 4>;
+
+[[nodiscard]] constexpr
+auto make_format_info_table() -> format_info_table {
+    format_info_table table;
+    table[size_t(format::flac)]    =  { .format = format::flac,    .ext = ".FLAC", .hint_only = format_hint::try_flac_only,    .hint_all = format_hint::try_flac_first };
+    table[size_t(format::mp3)]     =  { .format = format::mp3,     .ext = ".MP3",  .hint_only = format_hint::try_mp3_only,     .hint_all = format_hint::try_mp3_first };
+    table[size_t(format::wav)]     =  { .format = format::wav,     .ext = ".WAV",  .hint_only = format_hint::try_wav_only,     .hint_all = format_hint::try_wav_first };
+    table[size_t(format::wavpack)] =  { .format = format::wavpack, .ext = ".WV",   .hint_only = format_hint::try_wavpack_only, .hint_all = format_hint::try_wavpack_first };
+    return table;
+}
+
+static constexpr auto FORMAT_INFO = make_format_info_table();
 
 [[nodiscard]] static
 auto get_bit_depth(ma_format format) -> int {
@@ -302,4 +320,25 @@ auto make_wavpack_stream_reader() -> WavpackStreamReader64 {
 	return sr;
 }
 
+[[nodiscard]] static
+auto find_format_info(std::string_view extension) -> std::optional<format_info> {
+    auto match = [extension](const format_info& info) { return info.ext == extension; };
+    if (const auto pos = std::ranges::find_if(FORMAT_INFO, match); pos != FORMAT_INFO.end()) {
+        return *pos;
+    }
+    return std::nullopt;
+}
+
 } // audiorw::detail
+
+namespace audiorw {
+
+auto make_format_hint(const std::filesystem::path& file_path, bool try_all) -> format_hint {
+    const auto ext = file_path.extension();
+    if (const auto info = detail::find_format_info(ext.string())) {
+        return try_all ? info->hint_all : info->hint_only;
+    }
+    return format_hint::try_wav_only;
+}
+
+} // audiorw
