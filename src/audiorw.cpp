@@ -1,4 +1,5 @@
 #include "audiorw.hpp"
+#include <variant>
 
 namespace audiorw::detail {
 
@@ -110,6 +111,10 @@ auto scope_ma_decoder::read_pcm_frames(void* frames, ma_uint64 frame_count) -> m
 	return frames_read;
 }
 
+auto scope_ma_decoder::seek_to_pcm_frame(ma_uint64 frame) -> ma_result {
+	return ma_decoder_seek_to_pcm_frame(&decoder_, frame);
+}
+
 scope_ma_encoder::scope_ma_encoder(ma_encoder_write_proc on_write, ma_encoder_seek_proc on_seek, void* user_data, const ma_encoder_config& config) {
 	if (ma_encoder_init(on_write, on_seek, user_data, &config, &encoder_) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to initialize encoder"};
@@ -128,30 +133,25 @@ auto scope_ma_encoder::write_pcm_frames(const void* frames, ma_uint64 frame_coun
 	return frames_written;
 }
 
-scope_wavpack_reader::scope_wavpack_reader(WavpackStreamReader64* stream, void* user_data) {
+scope_wavpack_reader::scope_wavpack_reader(WavpackStreamReader64 stream, void* user_data)
+	: stream_reader_{stream}
+{
 	int flags = OPEN_2CH_MAX;
 	char error[80];
-	context_ = WavpackOpenFileInputEx64(stream, user_data, nullptr, error, flags, 0);
+	context_ = WavpackOpenFileInputEx64(&stream_reader_, user_data, nullptr, error, flags, 0);
 	if (!context_) {
 		throw std::runtime_error{error};
 	}
+	header_.format        = format::wavpack;
+	header_.bit_depth     = WavpackGetBitsPerSample(context_);
+	header_.channel_count = {static_cast<uint64_t>(WavpackGetNumChannels(context_))};
+	header_.frame_count   = {static_cast<uint64_t>(WavpackGetNumSamples64(context_))};
+	header_.SR            = WavpackGetSampleRate(context_);
+	mode_                 = WavpackGetMode(context_);
 }
 
 scope_wavpack_reader::~scope_wavpack_reader() {
 	WavpackCloseFile(context_);
-}
-
-auto scope_wavpack_reader::get_header() const -> header {
-	header h;
-	h.format        = format::wavpack;
-	h.bit_depth     = WavpackGetBitsPerSample(context_);
-	h.channel_count = {static_cast<uint64_t>(WavpackGetNumChannels(context_))};
-	h.frame_count   = {static_cast<uint64_t>(WavpackGetNumSamples64(context_))};
-	h.SR            = WavpackGetSampleRate(context_);
-    return h;
-}
-
-auto scope_wavpack_reader::read_samples(float* buffer, size_t frame_count, int mode) -> void {
 }
 
 scope_wavpack_writer::scope_wavpack_writer(audiorw::header header, storage_type type, WavpackBlockOutput blockout, void* user_data)
@@ -168,6 +168,103 @@ scope_wavpack_writer::scope_wavpack_writer(audiorw::header header, storage_type 
 
 scope_wavpack_writer::~scope_wavpack_writer() {
 	WavpackCloseFile(context_);
+}
+
+using stream = std::variant<scope_ma_decoder, scope_wavpack_reader>;
+
+[[nodiscard]] static
+auto ma_try_stream_open(std::ifstream* file) -> std::optional<stream> {
+	try         { return scope_ma_decoder{ma_on_read, ma_on_seek, file}; }
+	catch (...) { return std::nullopt; }
+}
+
+[[nodiscard]] static
+auto wavpack_try_stream_open(std::ifstream* file) -> std::optional<stream> {
+	try         { return scope_wavpack_reader{make_wavpack_stream_reader(), file}; }
+	catch (...) { return std::nullopt; }
+}
+
+[[nodiscard]] static
+auto try_stream_open(std::ifstream* file, audiorw::format format) -> std::optional<stream> {
+	switch (format) {
+		case audiorw::format::wavpack: { return wavpack_try_stream_open(file); }
+		default:                       { return ma_try_stream_open(file); }
+	}
+}
+
+[[nodiscard]] static
+auto stream_open(std::ifstream* file, format_hint hint) -> stream {
+	const auto formats_to_try = detail::get_formats_to_try(hint);
+	for (auto format : formats_to_try) {
+		if (auto stream = try_stream_open(file, format)) {
+			return std::move(stream).value();
+		}
+	}
+	throw std::runtime_error{"Failed to open stream"};
+}
+
+[[nodiscard]] static
+auto stream_read_frames(scope_ma_decoder* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	return {stream->read_pcm_frames(buffer, frames_to_read.value)};
+}
+
+[[nodiscard]] static
+auto stream_seek(scope_ma_decoder* stream, ads::frame_idx pos) -> bool {
+	return stream->seek_to_pcm_frame(pos.value) == MA_SUCCESS;
+}
+
+[[nodiscard]] static
+auto stream_read_float_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
+	return {WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value)};
+}
+
+[[nodiscard]] static
+auto stream_read_int_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
+	const auto& header     = stream->get_header();
+	const auto frames_read = WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value);
+	const auto chs         = header.channel_count.value;
+	const auto divisor     = (1 < (header.bit_depth -1 )) - 1;
+	for (auto i = 0; i < frames_read * chs; i++) {
+		buffer[i] = static_cast<float>(buffer_as_ints[i]) / divisor;
+	}
+	return {frames_read};
+}
+
+[[nodiscard]] static
+auto stream_read_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	const auto float_mode = (stream->mode() & MODE_FLOAT) == MODE_FLOAT;
+	if (float_mode) { return stream_read_float_frames(stream, buffer, frames_to_read); }
+	else            { return stream_read_int_frames(stream, buffer, frames_to_read); }
+}
+
+[[nodiscard]] static
+auto stream_seek(scope_wavpack_reader* stream, ads::frame_idx pos) -> bool {
+	return WavpackSeekSample64(stream->context(), pos.value) == 1;
+}
+
+struct streamer_impl {
+	streamer_impl(const std::filesystem::path& path, format_hint hint);
+	auto read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
+	auto seek(ads::frame_idx pos) -> bool;
+private:
+	std::ifstream file_;
+	stream stream_;
+};
+
+streamer_impl::streamer_impl(const std::filesystem::path& path, format_hint hint)
+	: file_{path, std::ios::binary}
+	, stream_{stream_open(&file_, hint)}
+{
+}
+
+auto streamer_impl::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	return std::visit([buffer, frames_to_read](auto& stream){ return stream_read_frames(&stream, buffer, frames_to_read); }, stream_);
+}
+
+auto streamer_impl::seek(ads::frame_idx pos) -> bool {
+	return std::visit([pos](auto& stream){ return stream_seek(&stream, pos); }, stream_);
 }
 
 auto get_formats_to_try(format_hint hint) -> formats_to_try {
@@ -247,12 +344,13 @@ auto wavpack_write_float_chunk(WavpackContext* context, ads::interleaved<float>*
 	}
 }
 
-auto wavpack_write_int_chunk(WavpackContext* context, ads::channel_count chs, std::vector<int32_t>* int_sample_buf, int int_scale, ads::interleaved<float>* frames, size_t chunk_size) -> void {
-	int_sample_buf->resize(chunk_size * chs.value);
-	for (int i = 0; i < int_sample_buf->size(); i++) {
-		(*int_sample_buf)[i] = static_cast<int32_t>(double(frames->at(i)) * int_scale);
+auto wavpack_write_int_chunk(WavpackContext* context, ads::channel_count chs, int int_scale, ads::interleaved<float>* frames, size_t chunk_size) -> void {
+	static_assert (sizeof(float) == sizeof(int32_t));
+	auto buffer_as_ints = reinterpret_cast<int32_t*>(frames->data());
+	for (int i = 0; i < chs.value * chunk_size; i++) {
+		buffer_as_ints[i] = static_cast<int32_t>(double(frames->at(i)) * int_scale);
 	}
-	if (!WavpackPackSamples(context, int_sample_buf->data(), chunk_size)) {
+	if (!WavpackPackSamples(context, buffer_as_ints, chunk_size)) {
 		throw std::runtime_error("Write error");
 	}
 }
@@ -269,52 +367,56 @@ auto make_wavpack_config(audiorw::header header, storage_type type) -> WavpackCo
 }
 
 auto wavpack_write_blockout(void* puserdata, void* data, int64_t bcount) -> int {
-	auto& user_data = *reinterpret_cast<wavpack_write_user_data_t*>(puserdata);
+	auto& writer = *reinterpret_cast<atomic_file_writer*>(puserdata);
 	const auto char_data = reinterpret_cast<const char*>(data);
-	user_data.file.stream().write(char_data, bcount);
-	return user_data.file.stream().fail() ? 0 : 1;
+	writer.stream().write(char_data, bcount);
+	return writer.stream().fail() ? 0 : 1;
 }
 
 auto make_wavpack_stream_reader() -> WavpackStreamReader64 {
 	WavpackStreamReader64 sr;
 	sr.can_seek = [](void* puserdata) -> int {
 		if (!puserdata) return 0;
-		const auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		return user_data.file.fail() ? 0 : 1;
+		const auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
+		return file.fail() ? 0 : 1;
 	};
 	sr.close = [](void* puserdata) -> int {
-		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		user_data.file.close();
+		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
+		file.close();
 		return 1;
 	};
 	sr.get_length = [](void* puserdata) -> int64_t {
-		const auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		return user_data.length;
+		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
+		const auto pos = file.tellg();
+		file.seekg(0, std::ios::end);
+		const auto length = file.tellg();
+		file.seekg(pos, std::ios::beg);
+		return length;
 	};
 	sr.get_pos = [](void* puserdata) -> int64_t {
-		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		return user_data.file.tellg();
+		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
+		return file.tellg();
 	};
 	sr.push_back_byte = [](void* puserdata, int c) -> int {
-		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		user_data.file.putback(c);
-		return user_data.file.fail() ? 0 : c;
+		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
+		file.putback(c);
+		return file.fail() ? 0 : c;
 	};
 	sr.read_bytes = [](void* puserdata, void* data, int32_t bcount) -> int32_t {
 		if (bcount < 1) return 0;
-		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
+		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
 		auto char_data = reinterpret_cast<char*>(data);
-		user_data.file.read(char_data, bcount);
-		return user_data.file.fail() ? 0 : user_data.file.gcount();
+		file.read(char_data, bcount);
+		return file.fail() ? 0 : file.gcount();
 	};
 	sr.set_pos_abs = [](void* puserdata, int64_t pos) -> int {
-		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		user_data.file.seekg(pos, std::ios_base::beg);
+		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
+		file.seekg(pos, std::ios_base::beg);
 		return 0;
 	};
 	sr.set_pos_rel = [](void* puserdata, int64_t delta, int mode) -> int {
-		auto& user_data = *reinterpret_cast<wavpack_read_user_data_t*>(puserdata);
-		user_data.file.seekg(delta, wavpack_to_std_origin(mode));
+		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
+		file.seekg(delta, wavpack_to_std_origin(mode));
 		return 0;
 	};
 	return sr;
@@ -329,9 +431,36 @@ auto find_format_info(std::string_view extension) -> std::optional<format_info> 
     return std::nullopt;
 }
 
+auto ma_on_read(ma_decoder* decoder, void* buffer, size_t bytes_to_read, size_t* bytes_read) -> ma_result {
+	auto& file = *reinterpret_cast<std::ifstream*>(decoder->pUserData);
+	const auto char_data = reinterpret_cast<char*>(buffer);
+	file.read(char_data, bytes_to_read);
+	*bytes_read = file.gcount();
+	return file.fail() ? MA_ERROR : MA_SUCCESS;
+}
+
+auto ma_on_seek(ma_decoder* decoder, ma_int64 offset, ma_seek_origin origin) -> ma_result {
+	auto& file = *reinterpret_cast<std::ifstream*>(decoder->pUserData);
+	file.seekg(offset, to_std_origin(origin));
+	return file.fail() ? MA_ERROR : MA_SUCCESS;
+}
+
 } // audiorw::detail
 
 namespace audiorw {
+
+streamer::streamer(const std::filesystem::path& path, format_hint hint)
+    : impl_{std::make_unique<detail::streamer_impl>(path, hint)}
+{
+}
+
+auto streamer::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+    return impl_->read_frames(buffer, frames_to_read);
+}
+
+auto streamer::seek(ads::frame_idx pos) -> bool {
+    return impl_->seek(pos);
+}
 
 auto make_format_hint(const std::filesystem::path& file_path, bool try_all) -> format_hint {
     const auto ext = file_path.extension();
