@@ -1,3 +1,4 @@
+#include <stdexcept>
 #define NOMINMAX
 #define MINIAUDIO_IMPLEMENTATION
 #include "audiorw.hpp"
@@ -82,14 +83,14 @@ auto atomic_file_writer::stream() -> std::ofstream& {
 	return file_;
 }
 
-scope_ma_decoder::scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data) {
-	if (ma_decoder_init(on_read, on_seek, user_data, nullptr, &decoder_) != MA_SUCCESS) {
+scope_ma_decoder::scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, audiorw::format format)
+	: decoder_{std::make_unique<ma_decoder>().release(), &ma_decoder_uninit}
+{
+	auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
+	config.encodingFormat = to_ma_encoding_format(format);
+	if (ma_decoder_init(on_read, on_seek, user_data, &config, decoder_.get()) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to initialize decoder"};
 	}
-}
-
-scope_ma_decoder::~scope_ma_decoder() {
-	ma_decoder_uninit(&decoder_);
 }
 
 auto scope_ma_decoder::get_header(audiorw::format format) const -> header {
@@ -97,11 +98,11 @@ auto scope_ma_decoder::get_header(audiorw::format format) const -> header {
 	ma_uint32 dec_channels;
 	ma_uint32 dec_SR;
 	ma_uint64 dec_length;
-	if (ma_decoder_get_data_format(const_cast<ma_decoder*>(&decoder_), &dec_format, &dec_channels, &dec_SR, nullptr, 0) != MA_SUCCESS) {
+	if (ma_decoder_get_data_format(decoder_.get(), &dec_format, &dec_channels, &dec_SR, nullptr, 0) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to get data format from decoder"};
 	}
 	// NOTE: For MP3s this will have to decode the entire file at this point
-	if (ma_decoder_get_length_in_pcm_frames(const_cast<ma_decoder*>(&decoder_), &dec_length) != MA_SUCCESS) {
+	if (ma_decoder_get_length_in_pcm_frames(decoder_.get(), &dec_length) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to get frame count from decoder"};
 	}
 	header out;
@@ -114,34 +115,36 @@ auto scope_ma_decoder::get_header(audiorw::format format) const -> header {
 }
 
 auto scope_ma_decoder::get_header() const -> header {
-	return get_header(get_format(decoder_));
+	return get_header(get_format(*decoder_));
 }
 
 auto scope_ma_decoder::read_pcm_frames(void* frames, ma_uint64 frame_count) -> ma_uint64 {
 	ma_uint64 frames_read = 0;
-	if (ma_decoder_read_pcm_frames(&decoder_, frames, frame_count, &frames_read) != MA_SUCCESS) {
+	if (ma_decoder_read_pcm_frames(decoder_.get(), frames, frame_count, &frames_read) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to read PCM frames"};
 	}
 	return frames_read;
 }
 
 auto scope_ma_decoder::seek_to_pcm_frame(ma_uint64 frame) -> ma_result {
-	return ma_decoder_seek_to_pcm_frame(&decoder_, frame);
+	return ma_decoder_seek_to_pcm_frame(decoder_.get(), frame);
 }
 
-scope_ma_encoder::scope_ma_encoder(ma_encoder_write_proc on_write, ma_encoder_seek_proc on_seek, void* user_data, const ma_encoder_config& config) {
-	if (ma_encoder_init(on_write, on_seek, user_data, &config, &encoder_) != MA_SUCCESS) {
+scope_ma_encoder::scope_ma_encoder(ma_encoder_write_proc on_write, ma_encoder_seek_proc on_seek, void* user_data, const ma_encoder_config& config)
+	: encoder_{std::make_unique<ma_encoder>().release(), &ma_encoder_uninit}
+{
+	if (ma_encoder_init(on_write, on_seek, user_data, &config, encoder_.get()) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to initialize encoder"};
 	}
 }
 
 scope_ma_encoder::~scope_ma_encoder() {
-	ma_encoder_uninit(&encoder_);
+	ma_encoder_uninit(encoder_.get());
 }
 
 auto scope_ma_encoder::write_pcm_frames(const void* frames, ma_uint64 frame_count) -> ma_uint64 {
 	ma_uint64 frames_written = 0;
-	if (ma_encoder_write_pcm_frames(&encoder_, frames, frame_count, &frames_written) != MA_SUCCESS) {
+	if (ma_encoder_write_pcm_frames(encoder_.get(), frames, frame_count, &frames_written) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to write PCM frames"};
 	}
 	return frames_written;
@@ -165,7 +168,25 @@ scope_wavpack_reader::scope_wavpack_reader(WavpackStreamReader64 stream, void* u
 }
 
 scope_wavpack_reader::~scope_wavpack_reader() {
-	WavpackCloseFile(context_);
+	if (context_) {
+		WavpackCloseFile(context_);
+	}
+}
+
+scope_wavpack_reader::scope_wavpack_reader(scope_wavpack_reader&& rhs) noexcept
+	: stream_reader_{std::exchange(rhs.stream_reader_, {})}
+	, context_{std::exchange(rhs.context_, {})}
+	, header_{std::exchange(rhs.header_, {})}
+	, mode_{std::exchange(rhs.mode_, {})}
+{
+}
+
+scope_wavpack_reader& scope_wavpack_reader::operator=(scope_wavpack_reader&& rhs) noexcept {
+	stream_reader_ = std::exchange(rhs.stream_reader_, {});
+	context_ = std::exchange(rhs.context_, {});
+	header_ = std::exchange(rhs.header_, {});
+	mode_ = std::exchange(rhs.mode_, {});
+	return *this;
 }
 
 scope_wavpack_writer::scope_wavpack_writer(const audiorw::header& header, storage_type type, WavpackBlockOutput blockout, void* user_data)
@@ -301,6 +322,67 @@ auto find_format_info(std::string_view ext) -> std::optional<format_info> {
     return std::nullopt;
 }
 
+auto ma_try_read_header(audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data) -> header {
+	auto decoder = scope_ma_decoder{on_read, on_seek, &user_data, format};
+	// NOTE: For mp3s get_header() will decode the entire file immediately.
+	return decoder.get_header(format);
+}
+
+auto stream_read_float_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
+	return {WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value)};
+}
+
+auto stream_read_int_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
+	const auto& header     = stream->get_header();
+	const auto frames_read = WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value);
+	const auto chs         = header.channel_count.value;
+	const auto divisor     = (1 < (header.bit_depth -1 )) - 1;
+	for (auto i = 0; i < frames_read * chs; i++) {
+		buffer[i] = static_cast<float>(buffer_as_ints[i]) / divisor;
+	}
+	return {frames_read};
+}
+
+auto read_frames(scope_wavpack_reader* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	const auto float_mode = (decoder->mode() & MODE_FLOAT) == MODE_FLOAT;
+	if (float_mode) { return stream_read_float_frames(decoder, buffer, frames_to_read); }
+	else            { return stream_read_int_frames(decoder, buffer, frames_to_read); }
+}
+
+auto seek(scope_wavpack_reader* decoder, ads::frame_idx pos) -> bool {
+	return WavpackSeekSample64(decoder->context(), pos.value) == 1;
+}
+
+auto get_header(const scope_wavpack_reader* decoder) -> header {
+	return decoder->get_header();
+}
+
+auto get_header(const scope_ma_decoder* decoder) -> header {
+	return decoder->get_header();
+}
+
+auto read_frames(scope_ma_decoder* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	return {decoder->read_pcm_frames(buffer, frames_to_read.value)};
+}
+
+auto seek(scope_ma_decoder* decoder, ads::frame_idx pos) -> bool {
+	return decoder->seek_to_pcm_frame(pos.value) == MA_SUCCESS;
+}
+
+auto get_header(const detail::decoder* decoder) -> header {
+	return std::visit([](auto& decoder){ return get_header(&decoder); }, *decoder);
+}
+
+auto read_frames(detail::decoder* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	return std::visit([buffer, frames_to_read](auto& decoder){ return read_frames(&decoder, buffer, frames_to_read); }, *decoder);
+}
+
+auto seek(detail::decoder* decoder, ads::frame_idx pos) -> bool {
+	return std::visit([pos](auto& decoder){ return seek(&decoder, pos); }, *decoder);
+}
+
 } // audiorw::detail
 
 namespace audiorw {
@@ -318,5 +400,210 @@ auto make_format_hint(const std::filesystem::path& file_path, bool try_all) -> s
 	}
 	return std::nullopt;
 }
+
+byte_input_stream::byte_input_stream(std::span<const std::byte> bytes)
+	: bytes_{bytes}
+{
+}
+
+auto byte_input_stream::close() -> bool {
+	return true;
+}
+
+auto byte_input_stream::get_length() -> std::optional<size_t> {
+	return bytes_.size();
+}
+
+auto byte_input_stream::get_pos() -> size_t {
+	return pos_;
+}
+
+auto byte_input_stream::push_back_byte(std::byte v) -> bool {
+	pos_--;
+	return true;
+}
+
+auto byte_input_stream::read_bytes(std::span<std::byte> buffer) -> size_t {
+	const auto remaining_bytes = bytes_.size() - pos_;
+	const auto n = std::min(buffer.size(), remaining_bytes);
+	const auto beg = bytes_.data() + pos_;
+	const auto end = beg + n;
+	std::copy(beg, end, buffer.data());
+	pos_ += n;
+	return n;
+}
+
+auto byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+	switch (mode) {
+		case std::ios::beg: { pos_ = offset; return true; }
+		case std::ios::cur: { pos_ += offset; return true; }
+		case std::ios::end: { pos_ = bytes_.size() + offset; return true; }
+	}
+	return false;
+}
+
+//########################################################################################
+
+file_byte_input_stream::file_byte_input_stream(const std::filesystem::path& path)
+	: file_{path, std::ios::binary}
+{
+}
+
+auto file_byte_input_stream::close() -> bool {
+	file_.close();
+	return true;
+}
+
+auto file_byte_input_stream::get_length() -> std::optional<size_t> {
+	const auto pos = file_.tellg();
+	file_.seekg(0, std::ios::end);
+	const auto length = file_.tellg();
+	file_.seekg(pos, std::ios::beg);
+	return length;
+}
+
+auto file_byte_input_stream::get_pos() -> size_t {
+	return file_.tellg();
+}
+
+auto file_byte_input_stream::push_back_byte(std::byte v) -> bool {
+	file_.putback(static_cast<char>(v));
+	return !file_.fail();
+}
+
+auto file_byte_input_stream::read_bytes(std::span<std::byte> buffer) -> size_t {
+	if (buffer.size() < 1) return 0;
+	auto char_buffer = reinterpret_cast<char*>(buffer.data());
+	file_.read(char_buffer, buffer.size());
+	return file_.fail() ? 0 : file_.gcount();
+}
+
+auto file_byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+	file_.seekg(offset, mode);
+	return !file_.fail();
+}
+
+//########################################################################################
+
+byte_item_input_stream::byte_item_input_stream(std::span<const std::byte> bytes, format_hint hint)
+	: in_{std::make_unique<byte_input_stream>(bytes)}
+	, decoder_{detail::make_decoder(in_.get(), hint)}
+{
+}
+
+auto byte_item_input_stream::get_header() const -> header {
+	return detail::get_header(&decoder_);
+}
+
+auto byte_item_input_stream::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	return detail::read_frames(&decoder_, buffer, frames_to_read);
+}
+
+auto byte_item_input_stream::seek(ads::frame_idx pos) -> bool {
+	return detail::seek(&decoder_, pos);
+}
+
+//########################################################################################
+
+file_item_input_stream::file_item_input_stream(const std::filesystem::path& path, format_hint hint)
+	: in_{path}
+	, decoder_{detail::make_decoder(&in_, hint)}
+{
+}
+
+auto file_item_input_stream::get_header() const -> header {
+	return detail::get_header(&decoder_);
+}
+
+auto file_item_input_stream::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+	return detail::read_frames(&decoder_, buffer, frames_to_read);
+}
+
+auto file_item_input_stream::seek(ads::frame_idx pos) -> bool {
+	return detail::seek(&decoder_, pos);
+}
+
+//########################################################################################
+ads_frame_input_stream::ads_frame_input_stream(const ads::fully_dynamic<float>* frames)
+	: frames_{frames}
+{
+}
+
+auto ads_frame_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+	const auto frames_remaining = frames_->get_frame_count().value - pos_;
+	const auto frames_to_read   = std::min(frames_remaining, buffer.size() / frames_->get_channel_count().value);
+	const auto beg              = frames_->begin();
+	const auto end              = beg + frames_to_read;
+	ads::interleave(std::ranges::subrange(beg, end), buffer.begin());
+	pos_ += frames_to_read;
+	return {frames_to_read};
+}
+
+//########################################################################################
+item_frame_input_stream::item_frame_input_stream(const audiorw::item* item)
+	: stream_{&item->frames}
+{
+}
+
+auto item_frame_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+	return stream_.read_frames(buffer);
+}
+
+//########################################################################################
+
+item_item_output_stream::item_item_output_stream(audiorw::item* item)
+	: item_{item}
+{
+}
+
+auto item_item_output_stream::seek(ads::frame_idx pos) -> bool {
+	pos_ = 0;
+	return true;
+}
+
+auto item_item_output_stream::write_header(audiorw::header header) -> void {
+	item_->header = header;
+	item_->frames = ads::make<float>(header.channel_count, header.frame_count);
+}
+
+auto item_item_output_stream::write_frames(std::span<const float> buffer) -> ads::frame_count {
+	if (item_->header.channel_count == 0) {
+		throw std::runtime_error{"Header not written yet"};
+	}
+	const auto space_remaining = item_->frames.get_frame_count().value - pos_;
+	const auto frames_to_write = std::min(space_remaining, buffer.size() / item_->frames.get_channel_count().value);
+	const auto beg             = buffer.begin();
+	const auto end             = buffer.begin() + frames_to_write;
+	const auto write_pos       = item_->frames.begin() + pos_;
+	ads::deinterleave(std::ranges::subrange(beg, end), write_pos);
+	pos_ += frames_to_write;
+	return {frames_to_write};
+}
+
+//########################################################################################
+
+file_byte_output_stream::file_byte_output_stream(const std::filesystem::path& path)
+	: writer_{path}
+{
+}
+
+auto file_byte_output_stream::commit() -> void {
+	writer_.commit();
+}
+
+auto file_byte_output_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+	auto& file = writer_.stream();
+	file.seekp(offset, mode);
+	return !file.fail();
+}
+
+auto file_byte_output_stream::write_bytes(std::span<const std::byte> buffer) -> size_t {
+	const auto buffer_as_chars = reinterpret_cast<const char*>(buffer.data());
+	auto& file = writer_.stream();
+	file.write(buffer_as_chars, buffer.size());
+	return file.fail() ? 0 : buffer.size();
+}
+
+//########################################################################################
 
 } // audiorw
