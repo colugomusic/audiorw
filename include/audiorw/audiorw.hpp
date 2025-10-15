@@ -99,8 +99,8 @@ enum class format_hint {
 
 enum class operation_result { abort, success };
 
-struct ads_frame_input_stream {
-	ads_frame_input_stream(const ads::fully_dynamic<float>* frames);
+struct stream_frames_from_ads {
+	stream_frames_from_ads(const ads::fully_dynamic<float>* frames);
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 private:
 	const ads::fully_dynamic<float>* frames_;
@@ -120,8 +120,8 @@ private:
 	size_t pos_ = 0;
 };
 
-struct byte_item_input_stream {
-	byte_item_input_stream(std::span<const std::byte> bytes, format_hint hint);
+struct stream_item_from_bytes {
+	stream_item_from_bytes(std::span<const std::byte> bytes, format_hint hint);
 	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
 	auto get_header() const -> header;
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
@@ -131,8 +131,8 @@ private:
 	detail::decoder decoder_;
 };
 
-struct file_byte_input_stream {
-	file_byte_input_stream(const std::filesystem::path& path);
+struct stream_bytes_from_fs_path {
+	stream_bytes_from_fs_path(const std::filesystem::path& path);
 	auto close() -> bool;
 	auto get_length() -> std::optional<size_t>;
 	auto get_pos() -> size_t;
@@ -143,8 +143,8 @@ private:
 	std::ifstream file_;
 };
 
-struct file_byte_output_stream {
-	file_byte_output_stream(const std::filesystem::path& path);
+struct stream_bytes_to_fs_path {
+	stream_bytes_to_fs_path(const std::filesystem::path& path);
 	auto commit() -> void;
 	auto seek(int64_t offset, std::ios::seekdir mode) -> bool;
 	auto write_bytes(std::span<const std::byte> buffer) -> size_t;
@@ -152,26 +152,26 @@ private:
 	detail::atomic_file_writer writer_;
 };
 
-struct file_item_input_stream {
-	file_item_input_stream(const std::filesystem::path& path, format_hint hint);
+struct stream_item_from_fs_path {
+	stream_item_from_fs_path(const std::filesystem::path& path, format_hint hint);
 	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
 	auto get_header() const -> header;
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
-	file_byte_input_stream in_;
+	stream_bytes_from_fs_path in_;
 	detail::decoder decoder_;
 };
 
-struct item_frame_input_stream {
-	item_frame_input_stream(const audiorw::item* item);
+struct stream_frames_from_item {
+	stream_frames_from_item(const audiorw::item* item);
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 private:
-	ads_frame_input_stream stream_;
+	stream_frames_from_ads stream_;
 };
 
-struct item_item_output_stream {
-	item_item_output_stream(audiorw::item* item);
+struct stream_item_to_item {
+	stream_item_to_item(audiorw::item* item);
 	auto commit() -> void {}
 	auto seek(ads::frame_idx pos) -> bool;
 	auto write_header(audiorw::header header) -> void;
@@ -181,8 +181,8 @@ private:
 	size_t pos_ = 0;
 };
 
-struct std_vector_byte_output_stream {
-	std_vector_byte_output_stream(std::vector<std::byte>* vector);
+struct stream_bytes_to_std_vector {
+	stream_bytes_to_std_vector(std::vector<std::byte>* vector);
 	auto commit() -> void {}
 	auto seek(int64_t offset, std::ios::seekdir mode) -> bool;
 	auto write_bytes(std::span<const std::byte> buffer) -> size_t;
@@ -195,24 +195,24 @@ private:
 
 namespace audiorw::stream::bytes {
 
-auto from(const std::filesystem::path& path) { return file_byte_input_stream{path}; }
-auto to(const std::filesystem::path& path)   { return file_byte_output_stream{path}; }
-auto to(std::vector<std::byte>* vector)      { return std_vector_byte_output_stream{vector}; }
+[[nodiscard]] inline auto from(const std::filesystem::path& path) { return stream_bytes_from_fs_path{path}; }
+[[nodiscard]] inline auto to(const std::filesystem::path& path)   { return stream_bytes_to_fs_path{path}; }
+[[nodiscard]] inline auto to(std::vector<std::byte>* vector)      { return stream_bytes_to_std_vector{vector}; }
 
 } // audiorw::stream::bytes
 
 namespace audiorw::stream::frames {
 
-auto from(const ads::fully_dynamic<float>* frames) { return ads_frame_input_stream{frames}; }
-auto from(const audiorw::item* item)               { return item_frame_input_stream{item}; }
+[[nodiscard]] inline auto from(const ads::fully_dynamic<float>* frames) { return stream_frames_from_ads{frames}; }
+[[nodiscard]] inline auto from(const audiorw::item* item)               { return stream_frames_from_item{item}; }
 
 } // audiorw::stream::frames
 
 namespace audiorw::stream::item {
 
-auto from(std::span<const std::byte> bytes, format_hint hint)  { return byte_item_input_stream{bytes, hint}; }
-auto from(const std::filesystem::path& path, format_hint hint) { return file_item_input_stream{path, hint}; }
-auto to(audiorw::item* item)                                   { return item_item_output_stream{item}; }
+[[nodiscard]] inline auto from(std::span<const std::byte> bytes, format_hint hint)  { return stream_item_from_bytes{bytes, hint}; }
+[[nodiscard]] inline auto from(const std::filesystem::path& path, format_hint hint) { return stream_item_from_fs_path{path, hint}; }
+[[nodiscard]] inline auto to(audiorw::item* item)                                   { return stream_item_to_item{item}; }
 
 } // audiorw::stream::item
 

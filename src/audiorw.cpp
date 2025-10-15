@@ -460,17 +460,17 @@ auto byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 
 //########################################################################################
 
-file_byte_input_stream::file_byte_input_stream(const std::filesystem::path& path)
+stream_bytes_from_fs_path::stream_bytes_from_fs_path(const std::filesystem::path& path)
 	: file_{path, std::ios::binary}
 {
 }
 
-auto file_byte_input_stream::close() -> bool {
+auto stream_bytes_from_fs_path::close() -> bool {
 	file_.close();
 	return true;
 }
 
-auto file_byte_input_stream::get_length() -> std::optional<size_t> {
+auto stream_bytes_from_fs_path::get_length() -> std::optional<size_t> {
 	const auto pos = file_.tellg();
 	file_.seekg(0, std::ios::end);
 	const auto length = file_.tellg();
@@ -478,74 +478,74 @@ auto file_byte_input_stream::get_length() -> std::optional<size_t> {
 	return length;
 }
 
-auto file_byte_input_stream::get_pos() -> size_t {
+auto stream_bytes_from_fs_path::get_pos() -> size_t {
 	return file_.tellg();
 }
 
-auto file_byte_input_stream::push_back_byte(std::byte v) -> bool {
+auto stream_bytes_from_fs_path::push_back_byte(std::byte v) -> bool {
 	file_.putback(static_cast<char>(v));
 	return !file_.fail();
 }
 
-auto file_byte_input_stream::read_bytes(std::span<std::byte> buffer) -> size_t {
+auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_t {
 	if (buffer.size() < 1) return 0;
 	auto char_buffer = reinterpret_cast<char*>(buffer.data());
 	file_.read(char_buffer, buffer.size());
 	return file_.fail() ? 0 : file_.gcount();
 }
 
-auto file_byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+auto stream_bytes_from_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 	file_.seekg(offset, mode);
 	return !file_.fail();
 }
 
 //########################################################################################
 
-byte_item_input_stream::byte_item_input_stream(std::span<const std::byte> bytes, format_hint hint)
+stream_item_from_bytes::stream_item_from_bytes(std::span<const std::byte> bytes, format_hint hint)
 	: in_{std::make_unique<byte_input_stream>(bytes)}
 	, decoder_{detail::make_decoder(in_.get(), hint)}
 {
 }
 
-auto byte_item_input_stream::get_header() const -> header {
+auto stream_item_from_bytes::get_header() const -> header {
 	return detail::get_header(&decoder_);
 }
 
-auto byte_item_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+auto stream_item_from_bytes::read_frames(std::span<float> buffer) -> ads::frame_count {
 	return detail::read_frames(&decoder_, buffer);
 }
 
-auto byte_item_input_stream::seek(ads::frame_idx pos) -> bool {
+auto stream_item_from_bytes::seek(ads::frame_idx pos) -> bool {
 	return detail::seek(&decoder_, pos);
 }
 
 //########################################################################################
 
-file_item_input_stream::file_item_input_stream(const std::filesystem::path& path, format_hint hint)
+stream_item_from_fs_path::stream_item_from_fs_path(const std::filesystem::path& path, format_hint hint)
 	: in_{path}
 	, decoder_{detail::make_decoder(&in_, hint)}
 {
 }
 
-auto file_item_input_stream::get_header() const -> header {
+auto stream_item_from_fs_path::get_header() const -> header {
 	return detail::get_header(&decoder_);
 }
 
-auto file_item_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+auto stream_item_from_fs_path::read_frames(std::span<float> buffer) -> ads::frame_count {
 	return detail::read_frames(&decoder_, buffer);
 }
 
-auto file_item_input_stream::seek(ads::frame_idx pos) -> bool {
+auto stream_item_from_fs_path::seek(ads::frame_idx pos) -> bool {
 	return detail::seek(&decoder_, pos);
 }
 
 //########################################################################################
-ads_frame_input_stream::ads_frame_input_stream(const ads::fully_dynamic<float>* frames)
+stream_frames_from_ads::stream_frames_from_ads(const ads::fully_dynamic<float>* frames)
 	: frames_{frames}
 {
 }
 
-auto ads_frame_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+auto stream_frames_from_ads::read_frames(std::span<float> buffer) -> ads::frame_count {
 	const auto frames_remaining = frames_->get_frame_count().value - pos_;
 	const auto frames_to_read   = std::min(frames_remaining, buffer.size() / frames_->get_channel_count().value);
 	const auto beg              = frames_->begin();
@@ -556,33 +556,33 @@ auto ads_frame_input_stream::read_frames(std::span<float> buffer) -> ads::frame_
 }
 
 //########################################################################################
-item_frame_input_stream::item_frame_input_stream(const audiorw::item* item)
+stream_frames_from_item::stream_frames_from_item(const audiorw::item* item)
 	: stream_{&item->frames}
 {
 }
 
-auto item_frame_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+auto stream_frames_from_item::read_frames(std::span<float> buffer) -> ads::frame_count {
 	return stream_.read_frames(buffer);
 }
 
 //########################################################################################
 
-item_item_output_stream::item_item_output_stream(audiorw::item* item)
+stream_item_to_item::stream_item_to_item(audiorw::item* item)
 	: item_{item}
 {
 }
 
-auto item_item_output_stream::seek(ads::frame_idx pos) -> bool {
+auto stream_item_to_item::seek(ads::frame_idx pos) -> bool {
 	pos_ = 0;
 	return true;
 }
 
-auto item_item_output_stream::write_header(audiorw::header header) -> void {
+auto stream_item_to_item::write_header(audiorw::header header) -> void {
 	item_->header = header;
 	item_->frames = ads::make<float>(header.channel_count, header.frame_count);
 }
 
-auto item_item_output_stream::write_frames(std::span<const float> buffer) -> ads::frame_count {
+auto stream_item_to_item::write_frames(std::span<const float> buffer) -> ads::frame_count {
 	if (item_->header.channel_count == 0) {
 		throw std::runtime_error{"Header not written yet"};
 	}
@@ -598,22 +598,22 @@ auto item_item_output_stream::write_frames(std::span<const float> buffer) -> ads
 
 //########################################################################################
 
-file_byte_output_stream::file_byte_output_stream(const std::filesystem::path& path)
+stream_bytes_to_fs_path::stream_bytes_to_fs_path(const std::filesystem::path& path)
 	: writer_{path}
 {
 }
 
-auto file_byte_output_stream::commit() -> void {
+auto stream_bytes_to_fs_path::commit() -> void {
 	writer_.commit();
 }
 
-auto file_byte_output_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+auto stream_bytes_to_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 	auto& file = writer_.stream();
 	file.seekp(offset, mode);
 	return !file.fail();
 }
 
-auto file_byte_output_stream::write_bytes(std::span<const std::byte> buffer) -> size_t {
+auto stream_bytes_to_fs_path::write_bytes(std::span<const std::byte> buffer) -> size_t {
 	const auto buffer_as_chars = reinterpret_cast<const char*>(buffer.data());
 	auto& file = writer_.stream();
 	file.write(buffer_as_chars, buffer.size());
@@ -622,17 +622,17 @@ auto file_byte_output_stream::write_bytes(std::span<const std::byte> buffer) -> 
 
 //########################################################################################
 
-std_vector_byte_output_stream::std_vector_byte_output_stream(std::vector<std::byte>* vector)
+stream_bytes_to_std_vector::stream_bytes_to_std_vector(std::vector<std::byte>* vector)
 	: vector_{vector}
 {
 }
 
-auto std_vector_byte_output_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+auto stream_bytes_to_std_vector::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 	pos_ = detail::seek(pos_, offset, vector_->size(), mode);
 	return true;
 }
 
-auto std_vector_byte_output_stream::write_bytes(std::span<const std::byte> buffer) -> size_t {
+auto stream_bytes_to_std_vector::write_bytes(std::span<const std::byte> buffer) -> size_t {
 	if (pos_ + buffer.size() >= vector_->size()) { vector_->resize(pos_ + buffer.size()); }
       std::copy(buffer.begin(), buffer.end(), vector_->begin() + pos_);
       pos_ += buffer.size();
