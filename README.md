@@ -35,9 +35,10 @@ auto example(std::filesystem::path path, std::stop_token stop) -> void {
 # Read an MP3 from other bytes that you already have in memory and write it to a WAV file
 ```c++
 auto example(std::span<const std::byte> mp3_bytes, std::filesystem::path out_file, std::stop_token stop) -> void {
-  auto in = audiorw::byte_item_input_stream{mp3_bytes, audiorw::format_hint::try_mp3_only};
-  const auto header = in.get_header();
+  auto in  = audiorw::byte_item_input_stream{mp3_bytes, audiorw::format_hint::try_mp3_only};
   auto out = audiorw::file_byte_output_stream{out_file};
+  auto header = in.get_header();
+  header.format = audiorw::format::wav;
   const auto result = audiorw::write(header, &in, &out, audiorw::storage_type::float_, fn_should_abort(stop));
   if (result == operation_result::abort) {
     // Writing was aborted.
