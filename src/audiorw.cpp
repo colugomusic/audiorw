@@ -540,15 +540,15 @@ auto stream_item_from_fs_path::seek(ads::frame_idx pos) -> bool {
 }
 
 //########################################################################################
-stream_frames_from_ads::stream_frames_from_ads(const ads::fully_dynamic<float>* frames)
+stream_frames_from_ads::stream_frames_from_ads(const ads::fully_dynamic<float>& frames)
 	: frames_{frames}
 {
 }
 
 auto stream_frames_from_ads::read_frames(std::span<float> buffer) -> ads::frame_count {
-	const auto frames_remaining = frames_->get_frame_count().value - pos_;
-	const auto frames_to_read   = std::min(frames_remaining, buffer.size() / frames_->get_channel_count().value);
-	const auto beg              = frames_->begin();
+	const auto frames_remaining = frames_.get_frame_count().value - pos_;
+	const auto frames_to_read   = std::min(frames_remaining, buffer.size() / frames_.get_channel_count().value);
+	const auto beg              = frames_.begin();
 	const auto end              = beg + frames_to_read;
 	ads::interleave(std::ranges::subrange(beg, end), buffer.begin());
 	pos_ += frames_to_read;
@@ -556,8 +556,8 @@ auto stream_frames_from_ads::read_frames(std::span<float> buffer) -> ads::frame_
 }
 
 //########################################################################################
-stream_frames_from_item::stream_frames_from_item(const audiorw::item* item)
-	: stream_{&item->frames}
+stream_frames_from_item::stream_frames_from_item(const audiorw::item& item)
+	: stream_{item.frames}
 {
 }
 

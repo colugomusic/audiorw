@@ -100,10 +100,10 @@ enum class format_hint {
 enum class operation_result { abort, success };
 
 struct stream_frames_from_ads {
-	stream_frames_from_ads(const ads::fully_dynamic<float>* frames);
+	stream_frames_from_ads(const ads::fully_dynamic<float>& frames);
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 private:
-	const ads::fully_dynamic<float>* frames_;
+	const ads::fully_dynamic<float>& frames_;
 	size_t pos_ = 0;
 };
 
@@ -164,7 +164,7 @@ private:
 };
 
 struct stream_frames_from_item {
-	stream_frames_from_item(const audiorw::item* item);
+	stream_frames_from_item(const audiorw::item& item);
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 private:
 	stream_frames_from_ads stream_;
@@ -203,8 +203,8 @@ namespace audiorw::stream::bytes {
 
 namespace audiorw::stream::frames {
 
-[[nodiscard]] inline auto from(const ads::fully_dynamic<float>* frames) { return stream_frames_from_ads{frames}; }
-[[nodiscard]] inline auto from(const audiorw::item* item)               { return stream_frames_from_item{item}; }
+[[nodiscard]] inline auto from(const ads::fully_dynamic<float>& frames) { return stream_frames_from_ads{frames}; }
+[[nodiscard]] inline auto from(const audiorw::item& item)               { return stream_frames_from_item{item}; }
 
 } // audiorw::stream::frames
 
