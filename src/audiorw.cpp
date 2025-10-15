@@ -2,27 +2,26 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "audiorw.hpp"
 #include "miniaudio.h"
-#include <variant>
 
 namespace audiorw::detail {
 
 struct format_info {
-    audiorw::format format;
-    std::string_view ext;
-    audiorw::format_hint hint_only;
-    audiorw::format_hint hint_all;
+	audiorw::format format;
+	std::string_view ext;
+	audiorw::format_hint hint_only;
+	audiorw::format_hint hint_all;
 };
 
 using format_info_table = std::array<format_info, 4>;
 
 [[nodiscard]] constexpr
 auto make_format_info_table() -> format_info_table {
-    format_info_table table;
-    table[size_t(format::flac)]    =  { .format = format::flac,    .ext = ".FLAC", .hint_only = format_hint::try_flac_only,    .hint_all = format_hint::try_flac_first };
-    table[size_t(format::mp3)]     =  { .format = format::mp3,     .ext = ".MP3",  .hint_only = format_hint::try_mp3_only,     .hint_all = format_hint::try_mp3_first };
-    table[size_t(format::wav)]     =  { .format = format::wav,     .ext = ".WAV",  .hint_only = format_hint::try_wav_only,     .hint_all = format_hint::try_wav_first };
-    table[size_t(format::wavpack)] =  { .format = format::wavpack, .ext = ".WV",   .hint_only = format_hint::try_wavpack_only, .hint_all = format_hint::try_wavpack_first };
-    return table;
+	format_info_table table;
+	table[size_t(format::flac)]    = { .format = format::flac,    .ext = ".FLAC", .hint_only = format_hint::try_flac_only,    .hint_all = format_hint::try_flac_first };
+	table[size_t(format::mp3)]     = { .format = format::mp3,     .ext = ".MP3",  .hint_only = format_hint::try_mp3_only,     .hint_all = format_hint::try_mp3_first };
+	table[size_t(format::wav)]     = { .format = format::wav,     .ext = ".WAV",  .hint_only = format_hint::try_wav_only,     .hint_all = format_hint::try_wav_first };
+	table[size_t(format::wavpack)] = { .format = format::wavpack, .ext = ".WV",   .hint_only = format_hint::try_wavpack_only, .hint_all = format_hint::try_wavpack_first };
+	return table;
 }
 
 static constexpr auto FORMAT_INFO = make_format_info_table();
@@ -169,10 +168,10 @@ scope_wavpack_reader::~scope_wavpack_reader() {
 	WavpackCloseFile(context_);
 }
 
-scope_wavpack_writer::scope_wavpack_writer(audiorw::header header, storage_type type, WavpackBlockOutput blockout, void* user_data)
+scope_wavpack_writer::scope_wavpack_writer(const audiorw::header& header, storage_type type, WavpackBlockOutput blockout, void* user_data)
 	: context_{WavpackOpenFileOutput(blockout, user_data, nullptr)}
 {
-    auto config = make_wavpack_config(header, type);
+	auto config = make_wavpack_config(header, type);
 	if (!WavpackSetConfiguration64(context_, &config, header.frame_count.value, nullptr)) {
 		throw std::runtime_error(WavpackGetErrorMessage(context_));
 	}
@@ -183,118 +182,6 @@ scope_wavpack_writer::scope_wavpack_writer(audiorw::header header, storage_type 
 
 scope_wavpack_writer::~scope_wavpack_writer() {
 	WavpackCloseFile(context_);
-}
-
-using stream = std::variant<scope_ma_decoder, scope_wavpack_reader>;
-
-[[nodiscard]] static
-auto ma_try_stream_open(std::ifstream* file) -> std::optional<stream> {
-	try         { return scope_ma_decoder{ma_on_read, ma_on_seek, file}; }
-	catch (...) { return std::nullopt; }
-}
-
-[[nodiscard]] static
-auto wavpack_try_stream_open(std::ifstream* file) -> std::optional<stream> {
-	try         { return scope_wavpack_reader{make_wavpack_stream_reader(), file}; }
-	catch (...) { return std::nullopt; }
-}
-
-[[nodiscard]] static
-auto try_stream_open(std::ifstream* file, audiorw::format format) -> std::optional<stream> {
-	switch (format) {
-		case audiorw::format::wavpack: { return wavpack_try_stream_open(file); }
-		default:                       { return ma_try_stream_open(file); }
-	}
-}
-
-[[nodiscard]] static
-auto stream_open(std::ifstream* file, format_hint hint) -> stream {
-	const auto formats_to_try = detail::get_formats_to_try(hint);
-	for (auto format : formats_to_try) {
-		if (auto stream = try_stream_open(file, format)) {
-			return std::move(stream).value();
-		}
-	}
-	throw std::runtime_error{"Failed to open stream"};
-}
-
-[[nodiscard]] static
-auto get_header(scope_ma_decoder* stream) -> header {
-	return stream->get_header();
-}
-
-[[nodiscard]] static
-auto stream_read_frames(scope_ma_decoder* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	return {stream->read_pcm_frames(buffer, frames_to_read.value)};
-}
-
-[[nodiscard]] static
-auto stream_seek(scope_ma_decoder* stream, ads::frame_idx pos) -> bool {
-	return stream->seek_to_pcm_frame(pos.value) == MA_SUCCESS;
-}
-
-[[nodiscard]] static
-auto stream_read_float_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
-	return {WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value)};
-}
-
-[[nodiscard]] static
-auto stream_read_int_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
-	const auto& header     = stream->get_header();
-	const auto frames_read = WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value);
-	const auto chs         = header.channel_count.value;
-	const auto divisor     = (1 < (header.bit_depth -1 )) - 1;
-	for (auto i = 0; i < frames_read * chs; i++) {
-		buffer[i] = static_cast<float>(buffer_as_ints[i]) / divisor;
-	}
-	return {frames_read};
-}
-
-[[nodiscard]] static
-auto get_header(scope_wavpack_reader* stream) -> header {
-	return stream->get_header();
-}
-
-[[nodiscard]] static
-auto stream_read_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	const auto float_mode = (stream->mode() & MODE_FLOAT) == MODE_FLOAT;
-	if (float_mode) { return stream_read_float_frames(stream, buffer, frames_to_read); }
-	else            { return stream_read_int_frames(stream, buffer, frames_to_read); }
-}
-
-[[nodiscard]] static
-auto stream_seek(scope_wavpack_reader* stream, ads::frame_idx pos) -> bool {
-	return WavpackSeekSample64(stream->context(), pos.value) == 1;
-}
-
-struct streamer_impl {
-	streamer_impl(const std::filesystem::path& path, format_hint hint);
-    auto get_header() -> header;
-	auto read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
-	auto seek(ads::frame_idx pos) -> bool;
-private:
-	std::ifstream file_;
-	stream stream_;
-};
-
-streamer_impl::streamer_impl(const std::filesystem::path& path, format_hint hint)
-	: file_{path, std::ios::binary}
-	, stream_{stream_open(&file_, hint)}
-{
-}
-
-auto streamer_impl::get_header() -> header {
-	return std::visit([](auto& stream){ return detail::get_header(&stream); }, stream_);
-}
-
-auto streamer_impl::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	return std::visit([buffer, frames_to_read](auto& stream){ return stream_read_frames(&stream, buffer, frames_to_read); }, stream_);
-}
-
-auto streamer_impl::seek(ads::frame_idx pos) -> bool {
-	return std::visit([pos](auto& stream){ return stream_seek(&stream, pos); }, stream_);
 }
 
 auto get_formats_to_try(format_hint hint) -> formats_to_try {
@@ -350,7 +237,7 @@ auto to_ma_format(int bit_depth, storage_type type) -> ma_format {
 	}
 }
 
-auto to_std_origin(ma_seek_origin origin) -> std::ios_base::seekdir {
+auto ma_to_std_seek_mode(ma_seek_origin origin) -> std::ios_base::seekdir {
 	switch (origin) {
 		case ma_seek_origin_start:   { return std::ios_base::beg; }
 		case ma_seek_origin_current: { return std::ios_base::cur; }
@@ -359,7 +246,7 @@ auto to_std_origin(ma_seek_origin origin) -> std::ios_base::seekdir {
 	}
 }
 
-auto wavpack_to_std_origin(int mode) -> std::ios_base::seekdir {
+auto wavpack_to_std_seek_mode(int mode) -> std::ios_base::seekdir {
 	switch (mode) {
 		case SEEK_SET: { return std::ios_base::beg; }
 		case SEEK_CUR: { return std::ios_base::cur; }
@@ -368,24 +255,7 @@ auto wavpack_to_std_origin(int mode) -> std::ios_base::seekdir {
 	}
 }
 
-auto wavpack_write_float_chunk(WavpackContext* context, ads::interleaved<float>* frames, size_t chunk_size) -> void {
-	if (!WavpackPackSamples(context, reinterpret_cast<int32_t*>(frames->data()), chunk_size)) {
-		throw std::runtime_error("Write error");
-	}
-}
-
-auto wavpack_write_int_chunk(WavpackContext* context, ads::channel_count chs, int int_scale, ads::interleaved<float>* frames, size_t chunk_size) -> void {
-	static_assert (sizeof(float) == sizeof(int32_t));
-	auto buffer_as_ints = reinterpret_cast<int32_t*>(frames->data());
-	for (int i = 0; i < chs.value * chunk_size; i++) {
-		buffer_as_ints[i] = static_cast<int32_t>(double(frames->at(i)) * int_scale);
-	}
-	if (!WavpackPackSamples(context, buffer_as_ints, chunk_size)) {
-		throw std::runtime_error("Write error");
-	}
-}
-
-auto make_wavpack_config(audiorw::header header, storage_type type) -> WavpackConfig {
+auto make_wavpack_config(const audiorw::header& header, storage_type type) -> WavpackConfig {
     auto config = WavpackConfig{0};
 	config.bytes_per_sample = header.bit_depth / 8;
 	config.bits_per_sample  = header.bit_depth;
@@ -396,116 +266,57 @@ auto make_wavpack_config(audiorw::header header, storage_type type) -> WavpackCo
 	return config;
 }
 
-auto wavpack_write_blockout(void* puserdata, void* data, int32_t bcount) -> int {
-	auto& writer = *reinterpret_cast<atomic_file_writer*>(puserdata);
-	const auto char_data = reinterpret_cast<const char*>(data);
-	writer.stream().write(char_data, bcount);
-	return writer.stream().fail() ? 0 : 1;
-}
-
-auto make_wavpack_stream_reader() -> WavpackStreamReader64 {
-	WavpackStreamReader64 sr;
-	sr.can_seek = [](void* puserdata) -> int {
-		if (!puserdata) return 0;
-		const auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		return file.fail() ? 0 : 1;
-	};
-	sr.close = [](void* puserdata) -> int {
-		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		file.close();
-		return 1;
-	};
-	sr.get_length = [](void* puserdata) -> int64_t {
-		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		const auto pos = file.tellg();
-		file.seekg(0, std::ios::end);
-		const auto length = file.tellg();
-		file.seekg(pos, std::ios::beg);
-		return length;
-	};
-	sr.get_pos = [](void* puserdata) -> int64_t {
-		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		return file.tellg();
-	};
-	sr.push_back_byte = [](void* puserdata, int c) -> int {
-		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		file.putback(c);
-		return file.fail() ? 0 : c;
-	};
-	sr.read_bytes = [](void* puserdata, void* data, int32_t bcount) -> int32_t {
-		if (bcount < 1) return 0;
-		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		auto char_data = reinterpret_cast<char*>(data);
-		file.read(char_data, bcount);
-		return file.fail() ? 0 : file.gcount();
-	};
-	sr.set_pos_abs = [](void* puserdata, int64_t pos) -> int {
-		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		file.seekg(pos, std::ios_base::beg);
-		return 0;
-	};
-	sr.set_pos_rel = [](void* puserdata, int64_t delta, int mode) -> int {
-		auto& file = *reinterpret_cast<std::ifstream*>(puserdata);
-		file.seekg(delta, wavpack_to_std_origin(mode));
-		return 0;
-	};
-	return sr;
+[[nodiscard]] static
+auto to_upper(std::string str) -> std::string {
+	std::transform(str.begin(), str.end(), str.begin(), [](char c) { return std::toupper(c); });
+	return str;
 }
 
 [[nodiscard]] static
-auto find_format_info(std::string_view extension) -> std::optional<format_info> {
-    auto match = [extension](const format_info& info) { return info.ext == extension; };
-    if (const auto pos = std::ranges::find_if(FORMAT_INFO, match); pos != FORMAT_INFO.end()) {
-        return *pos;
-    }
+auto prepend_dot(std::string str) -> std::string {
+	return std::string{"."} + str;
+}
+
+[[nodiscard]] static
+auto make_search_ext(std::string str) -> std::string {
+	str = to_upper(str);
+	if (str[0] != '.') {
+		str = prepend_dot(str);
+	}
+	return str;
+}
+
+[[nodiscard]] static
+auto find_format_info(std::string_view ext) -> std::optional<format_info> {
+	if (ext.empty()) {
+		return std::nullopt;
+	}
+	const auto search_ext = make_search_ext(std::string{ext});
+	auto match = [search_ext](const format_info& info) {
+		return info.ext == search_ext;
+	};
+	if (const auto pos = std::ranges::find_if(FORMAT_INFO, match); pos != FORMAT_INFO.end()) {
+		return *pos;
+	}
     return std::nullopt;
-}
-
-auto ma_on_read(ma_decoder* decoder, void* buffer, size_t bytes_to_read, size_t* bytes_read) -> ma_result {
-	auto& file = *reinterpret_cast<std::ifstream*>(decoder->pUserData);
-	const auto char_data = reinterpret_cast<char*>(buffer);
-	file.read(char_data, bytes_to_read);
-	*bytes_read = file.gcount();
-	return file.fail() ? MA_ERROR : MA_SUCCESS;
-}
-
-auto ma_on_seek(ma_decoder* decoder, ma_int64 offset, ma_seek_origin origin) -> ma_result {
-	auto& file = *reinterpret_cast<std::ifstream*>(decoder->pUserData);
-	file.seekg(offset, to_std_origin(origin));
-	return file.fail() ? MA_ERROR : MA_SUCCESS;
 }
 
 } // audiorw::detail
 
 namespace audiorw {
 
-streamer::streamer(const std::filesystem::path& path, format_hint hint)
-    : impl_{std::make_unique<detail::streamer_impl>(path, hint)}
-{
-}
-
-streamer::~streamer() = default;
-streamer& streamer::operator=(streamer&&) noexcept = default;
-streamer::streamer(streamer&&) noexcept = default;
-
-auto streamer::get_header() const -> header {
-    return impl_->get_header();
-}
-
-auto streamer::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-    return impl_->read_frames(buffer, frames_to_read);
-}
-
-auto streamer::seek(ads::frame_idx pos) -> bool {
-    return impl_->seek(pos);
+auto get_known_file_extensions() -> std::array<std::string_view, 4> {
+	std::array<std::string_view, 4> out;
+	std::ranges::transform(detail::FORMAT_INFO, std::begin(out), &detail::format_info::ext);
+	return out;
 }
 
 auto make_format_hint(const std::filesystem::path& file_path, bool try_all) -> std::optional<format_hint> {
-    const auto ext = file_path.extension();
-    if (const auto info = detail::find_format_info(ext.string())) {
-        return try_all ? info->hint_all : info->hint_only;
-    }
-    return std::nullopt;
+	const auto ext = file_path.extension();
+	if (const auto info = detail::find_format_info(ext.string())) {
+		return try_all ? info->hint_all : info->hint_only;
+	}
+	return std::nullopt;
 }
 
 } // audiorw
