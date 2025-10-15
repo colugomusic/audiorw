@@ -51,7 +51,7 @@ auto example(std::span<const std::byte> mp3_bytes, std::filesystem::path out_fil
 
 # Encode audio frames as WavPack into a vector of bytes
 ```c++
-auto example(const ads::fully_dynamic<float>* frames, std::stop_token stop) -> std::vector<std::byte> {
+auto example(const ads::fully_dynamic<float>& frames, std::stop_token stop) -> std::vector<std::byte> {
   auto bytes = std::vector<std::byte>{};
   auto in    = audiorw::stream::frames::from(frames);
   auto out   = audiorw::stream::bytes::to(&bytes);
