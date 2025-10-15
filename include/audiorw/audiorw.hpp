@@ -124,7 +124,7 @@ struct byte_item_input_stream {
 	byte_item_input_stream(std::span<const std::byte> bytes, format_hint hint);
 	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
     auto get_header() const -> header;
-	auto read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
+	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
 	std::unique_ptr<byte_input_stream> in_;
@@ -156,7 +156,7 @@ struct file_item_input_stream {
 	file_item_input_stream(const std::filesystem::path& path, format_hint hint);
 	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
     auto get_header() const -> header;
-	auto read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
+	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
 	file_byte_input_stream in_;
@@ -178,6 +178,16 @@ struct item_item_output_stream {
 	auto write_frames(std::span<const float> buffer) -> ads::frame_count;
 private:
 	item* item_;
+	size_t pos_ = 0;
+};
+
+struct std_vector_byte_output_stream {
+	std_vector_byte_output_stream(std::vector<std::byte>* vector);
+	auto commit() -> void {}
+	auto seek(int64_t offset, std::ios::seekdir mode) -> bool;
+	auto write_bytes(std::span<const std::byte> buffer) -> size_t;
+private:
+	std::vector<std::byte>* vector_;
 	size_t pos_ = 0;
 };
 

@@ -339,15 +339,15 @@ auto find_format_info(std::string_view ext) -> std::optional<format_info> {
     return std::nullopt;
 }
 
-auto stream_read_float_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
-	return {WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value)};
+auto stream_read_float_frames(scope_wavpack_reader* stream, std::span<float> buffer) -> ads::frame_count {
+	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer.data());
+	return {WavpackUnpackSamples(stream->context(), buffer_as_ints, buffer.size())};
 }
 
-auto stream_read_int_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer);
+auto stream_read_int_frames(scope_wavpack_reader* stream, std::span<float> buffer) -> ads::frame_count {
+	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer.data());
 	const auto& header     = stream->get_header();
-	const auto frames_read = WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read.value);
+	const auto frames_read = WavpackUnpackSamples(stream->context(), buffer_as_ints, buffer.size());
 	const auto chs         = header.channel_count.value;
 	const auto divisor     = (1 < (header.bit_depth -1 )) - 1;
 	for (auto i = 0; i < frames_read * chs; i++) {
@@ -356,10 +356,10 @@ auto stream_read_int_frames(scope_wavpack_reader* stream, float* buffer, ads::fr
 	return {frames_read};
 }
 
-auto read_frames(scope_wavpack_reader* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
+auto read_frames(scope_wavpack_reader* decoder, std::span<float> buffer) -> ads::frame_count {
 	const auto float_mode = (decoder->mode() & MODE_FLOAT) == MODE_FLOAT;
-	if (float_mode) { return stream_read_float_frames(decoder, buffer, frames_to_read); }
-	else            { return stream_read_int_frames(decoder, buffer, frames_to_read); }
+	if (float_mode) { return stream_read_float_frames(decoder, buffer); }
+	else            { return stream_read_int_frames(decoder, buffer); }
 }
 
 auto seek(scope_wavpack_reader* decoder, ads::frame_idx pos) -> bool {
@@ -374,8 +374,8 @@ auto get_header(const scope_ma_decoder* decoder) -> header {
 	return decoder->get_header();
 }
 
-auto read_frames(scope_ma_decoder* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	return {decoder->read_pcm_frames(buffer, frames_to_read.value)};
+auto read_frames(scope_ma_decoder* decoder, std::span<float> buffer) -> ads::frame_count {
+	return {decoder->read_pcm_frames(buffer.data(), buffer.size())};
 }
 
 auto seek(scope_ma_decoder* decoder, ads::frame_idx pos) -> bool {
@@ -386,12 +386,21 @@ auto get_header(const detail::decoder* decoder) -> header {
 	return std::visit([](auto& decoder){ return get_header(&decoder); }, *decoder);
 }
 
-auto read_frames(detail::decoder* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	return std::visit([buffer, frames_to_read](auto& decoder){ return read_frames(&decoder, buffer, frames_to_read); }, *decoder);
+auto read_frames(detail::decoder* decoder, std::span<float> buffer) -> ads::frame_count {
+	return std::visit([buffer](auto& decoder){ return read_frames(&decoder, buffer); }, *decoder);
 }
 
 auto seek(detail::decoder* decoder, ads::frame_idx pos) -> bool {
 	return std::visit([pos](auto& decoder){ return seek(&decoder, pos); }, *decoder);
+}
+
+auto seek(auto pos, auto offset, auto length, std::ios::seekdir mode) -> decltype(pos) {
+	switch (mode) {
+		case std::ios::beg: { pos = offset; return pos; }
+		case std::ios::cur: { pos += offset; return pos; }
+		case std::ios::end: { pos = length + offset; return pos; }
+		default:            { throw std::runtime_error{"Invalid seek mode"}; }
+	}
 }
 
 } // audiorw::detail
@@ -445,12 +454,8 @@ auto byte_input_stream::read_bytes(std::span<std::byte> buffer) -> size_t {
 }
 
 auto byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
-	switch (mode) {
-		case std::ios::beg: { pos_ = offset; return true; }
-		case std::ios::cur: { pos_ += offset; return true; }
-		case std::ios::end: { pos_ = bytes_.size() + offset; return true; }
-	}
-	return false;
+	pos_ = detail::seek(pos_, offset, bytes_.size(), mode);
+	return true;
 }
 
 //########################################################################################
@@ -506,8 +511,8 @@ auto byte_item_input_stream::get_header() const -> header {
 	return detail::get_header(&decoder_);
 }
 
-auto byte_item_input_stream::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	return detail::read_frames(&decoder_, buffer, frames_to_read);
+auto byte_item_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+	return detail::read_frames(&decoder_, buffer);
 }
 
 auto byte_item_input_stream::seek(ads::frame_idx pos) -> bool {
@@ -526,8 +531,8 @@ auto file_item_input_stream::get_header() const -> header {
 	return detail::get_header(&decoder_);
 }
 
-auto file_item_input_stream::read_frames(float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {
-	return detail::read_frames(&decoder_, buffer, frames_to_read);
+auto file_item_input_stream::read_frames(std::span<float> buffer) -> ads::frame_count {
+	return detail::read_frames(&decoder_, buffer);
 }
 
 auto file_item_input_stream::seek(ads::frame_idx pos) -> bool {
@@ -613,6 +618,25 @@ auto file_byte_output_stream::write_bytes(std::span<const std::byte> buffer) -> 
 	auto& file = writer_.stream();
 	file.write(buffer_as_chars, buffer.size());
 	return file.fail() ? 0 : buffer.size();
+}
+
+//########################################################################################
+
+std_vector_byte_output_stream::std_vector_byte_output_stream(std::vector<std::byte>* vector)
+	: vector_{vector}
+{
+}
+
+auto std_vector_byte_output_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+	pos_ = detail::seek(pos_, offset, vector_->size(), mode);
+	return true;
+}
+
+auto std_vector_byte_output_stream::write_bytes(std::span<const std::byte> buffer) -> size_t {
+	if (pos_ + buffer.size() >= vector_->size()) { vector_->resize(pos_ + buffer.size()); }
+      std::copy(buffer.begin(), buffer.end(), vector_->begin() + pos_);
+      pos_ += buffer.size();
+      return buffer.size();
 }
 
 //########################################################################################
