@@ -120,10 +120,11 @@ auto scope_ma_decoder::get_header() const -> header {
 
 auto scope_ma_decoder::read_pcm_frames(void* frames, ma_uint64 frame_count) -> ma_uint64 {
 	ma_uint64 frames_read = 0;
-	if (ma_decoder_read_pcm_frames(decoder_.get(), frames, frame_count, &frames_read) != MA_SUCCESS) {
-		throw std::runtime_error{"Failed to read PCM frames"};
+	switch (ma_decoder_read_pcm_frames(decoder_.get(), frames, frame_count, &frames_read)) {
+		case MA_SUCCESS: { return frames_read; }
+		case MA_AT_END:  { return frames_read; }
+		default:         { throw std::runtime_error{"Failed to read PCM frames"}; }
 	}
-	return frames_read;
 }
 
 auto scope_ma_decoder::seek_to_pcm_frame(ma_uint64 frame) -> ma_result {
@@ -258,6 +259,22 @@ auto to_ma_format(int bit_depth, storage_type type) -> ma_format {
 	}
 }
 
+auto to_operation_result(try_read_result r) -> operation_result {
+	switch (r) {
+		case try_read_result::abort:   { return operation_result::abort; }
+		case try_read_result::success: { return operation_result::success; }
+		default:                       { throw std::runtime_error{"Invalid try read result"}; }
+	}
+}
+
+auto to_try_read_result(operation_result r) -> try_read_result {
+	switch (r) {
+		case operation_result::abort:   { return try_read_result::abort; }
+		case operation_result::success: { return try_read_result::success; }
+		default:                        { throw std::runtime_error{"Invalid operation result"}; }
+	}
+}
+
 auto ma_to_std_seek_mode(ma_seek_origin origin) -> std::ios_base::seekdir {
 	switch (origin) {
 		case ma_seek_origin_start:   { return std::ios_base::beg; }
@@ -320,12 +337,6 @@ auto find_format_info(std::string_view ext) -> std::optional<format_info> {
 		return *pos;
 	}
     return std::nullopt;
-}
-
-auto ma_try_read_header(audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data) -> header {
-	auto decoder = scope_ma_decoder{on_read, on_seek, &user_data, format};
-	// NOTE: For mp3s get_header() will decode the entire file immediately.
-	return decoder.get_header(format);
 }
 
 auto stream_read_float_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count {

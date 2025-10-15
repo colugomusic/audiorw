@@ -31,6 +31,8 @@ struct header {
 
 namespace audiorw::detail {
 
+enum class try_read_result { abort, fail, success };
+
 struct atomic_file_writer {
 	atomic_file_writer() = default;
 	atomic_file_writer(const std::filesystem::path& path);
@@ -95,7 +97,7 @@ enum class format_hint {
 	try_wavpack_only,
 };
 
-enum class operation_result { abort, fail, success };
+enum class operation_result { abort, success };
 
 struct ads_frame_input_stream {
 	ads_frame_input_stream(const ads::fully_dynamic<float>* frames);
@@ -278,7 +280,6 @@ private:
 [[nodiscard]] auto get_formats_to_try(format_hint hint) -> formats_to_try;
 [[nodiscard]] auto get_header(const detail::decoder* decoder) -> header;
 [[nodiscard]] auto ma_to_std_seek_mode(ma_seek_origin) -> std::ios_base::seekdir;
-[[nodiscard]] auto ma_try_read_header(audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data) -> header;
 [[nodiscard]] auto make_wavpack_config(const audiorw::header& header, storage_type type) -> WavpackConfig;
 [[nodiscard]] auto read_frames(detail::decoder* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
 [[nodiscard]] auto read_frames(scope_ma_decoder* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
@@ -290,6 +291,8 @@ private:
 [[nodiscard]] auto stream_read_int_frames(scope_wavpack_reader* stream, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
 [[nodiscard]] auto to_ma_encoding_format(audiorw::format format) -> ma_encoding_format;
 [[nodiscard]] auto to_ma_format(int bit_depth, storage_type type) -> ma_format;
+[[nodiscard]] auto to_operation_result(try_read_result r) -> operation_result;
+[[nodiscard]] auto to_try_read_result(operation_result r) -> try_read_result;
 [[nodiscard]] auto wavpack_to_std_seek_mode(int mode) -> std::ios_base::seekdir;
 
 template <concepts::byte_input_stream Stream> [[nodiscard]]
@@ -484,7 +487,7 @@ auto wavpack_write(const audiorw::header& header, concepts::frame_input_stream a
 }
 
 [[nodiscard]]
-auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, concepts::should_abort_fn auto should_abort) -> operation_result {
+auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, concepts::should_abort_fn auto should_abort) -> try_read_result {
 	auto decoder = scope_ma_decoder{on_read, on_seek, &user_data, format};
 	// NOTE: For mp3s get_header() will decode the entire file immediately.
 	const auto header = decoder.get_header(format);
@@ -493,7 +496,7 @@ auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format,
 	auto frames_remaining = header.frame_count;
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
-			return operation_result::abort;
+			return try_read_result::abort;
 		}
 		const auto frames_to_read  = std::min(frames_remaining.value, uint64_t(CHUNK_SIZE));
 		const auto samples_to_read = header.channel_count.value * frames_to_read;
@@ -508,21 +511,14 @@ auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format,
 		}
 		frames_remaining -= frames_read;
 	}
-	return operation_result::success;
+	return try_read_result::success;
 }
 
 [[nodiscard]]
-auto ma_try_read(concepts::byte_input_stream auto* in, concepts::item_output_stream auto* out, audiorw::format format, concepts::should_abort_fn auto should_abort) -> operation_result {
+auto ma_try_read(concepts::byte_input_stream auto* in, concepts::item_output_stream auto* out, audiorw::format format, concepts::should_abort_fn auto should_abort) -> try_read_result {
 	using InStream = std::remove_reference_t<decltype(*in)>;
 	try         { return ma_try_read(out, format, ma_on_decoder_read<InStream>, ma_on_decoder_seek<InStream>, in, should_abort); }
-	catch (...) { return operation_result::fail; }
-}
-
-[[nodiscard]]
-auto ma_try_read_header(concepts::byte_input_stream auto* in, audiorw::format format) -> std::optional<header> {
-	using InStream = std::remove_reference_t<decltype(*in)>;
-	try         { return ma_try_read_header(format, ma_on_decoder_read<InStream>, ma_on_decoder_seek<InStream>, in); }
-	catch (...) { return std::nullopt; }
+	catch (...) { return try_read_result::fail; }
 }
 
 [[nodiscard]]
@@ -593,48 +589,25 @@ auto wavpack_read(concepts::byte_input_stream auto* in, concepts::item_output_st
 }
 
 [[nodiscard]]
-auto wavpack_read_header(concepts::byte_input_stream auto* in) -> header {
-	using InStream = std::remove_reference_t<decltype(*in)>;
-	auto stream = make_wavpack_stream_reader<InStream>();
-	auto reader = scope_wavpack_reader{stream, in};
-	return reader.get_header();
-}
-
-[[nodiscard]]
-auto try_read(concepts::byte_input_stream auto* in, concepts::item_output_stream auto* out, audiorw::format format, concepts::should_abort_fn auto should_abort) -> operation_result {
+auto try_read(concepts::byte_input_stream auto* in, concepts::item_output_stream auto* out, audiorw::format format, concepts::should_abort_fn auto should_abort) -> try_read_result {
 	switch (format) {
-		case format::wavpack: { return detail::wavpack_read(in, out, should_abort); }
+		case format::wavpack: { return to_try_read_result(detail::wavpack_read(in, out, should_abort)); }
 		default:              { return detail::ma_try_read(in, out, format, should_abort); }
 	}
 }
 
 [[nodiscard]]
-auto try_read_header(concepts::byte_input_stream auto* in, audiorw::format format) -> std::optional<header> {
-	switch (format) {
-		case format::wavpack: { return detail::wavpack_read_header(in); }
-		default:              { return detail::ma_try_read_header(in, format); }
-	}
-}
-
-[[nodiscard]]
 auto read(concepts::byte_input_stream auto* in, concepts::item_output_stream auto* out, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> operation_result {
-	const auto formats_to_try = get_formats_to_try(hint);
-	for (auto format : formats_to_try) {
-		if (const auto r = try_read(in, out, format, should_abort); r == operation_result::success) {
-			return r;
-		}
-		in->seek(0, std::ios::beg);
-		out->seek({0});
-	}
-	throw std::runtime_error{"Invalid audio format"};
-}
-
-[[nodiscard]]
-auto read_header(concepts::byte_input_stream auto* in, audiorw::format_hint hint) -> header {
-	const auto formats_to_try = get_formats_to_try(hint);
-	for (auto format : formats_to_try) {
-		if (const auto header = try_read_header(in, format)) {
-			return header;
+	for (auto format : get_formats_to_try(hint)) {
+		switch (const auto r = try_read(in, out, format, should_abort)) {
+			case try_read_result::fail: {
+				in->seek(0, std::ios::beg);
+				out->seek({0});
+				continue;
+			}
+			default: {
+				return to_operation_result(r);
+			}
 		}
 	}
 	throw std::runtime_error{"Invalid audio format"};
@@ -681,7 +654,6 @@ auto make_decoder(concepts::byte_input_stream auto* in, format_hint hint) -> det
 
 [[nodiscard]] auto get_known_file_extensions() -> std::array<std::string_view, 4>;
 [[nodiscard]] auto make_format_hint(const std::filesystem::path& file_path, bool try_all = false) -> std::optional<format_hint>;
-[[nodiscard]] auto read_header(concepts::byte_input_stream auto* in, audiorw::format_hint hint) -> header { return detail::read_header(in, hint); }
 
 auto read(concepts::byte_input_stream auto* in, concepts::item_output_stream auto* out, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> operation_result {
 	return detail::read(in, out, hint, std::move(should_abort));
