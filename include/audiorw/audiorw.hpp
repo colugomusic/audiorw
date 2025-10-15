@@ -123,7 +123,7 @@ private:
 struct byte_item_input_stream {
 	byte_item_input_stream(std::span<const std::byte> bytes, format_hint hint);
 	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
-    auto get_header() const -> header;
+	auto get_header() const -> header;
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
@@ -155,7 +155,7 @@ private:
 struct file_item_input_stream {
 	file_item_input_stream(const std::filesystem::path& path, format_hint hint);
 	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
-    auto get_header() const -> header;
+	auto get_header() const -> header;
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
@@ -192,6 +192,29 @@ private:
 };
 
 } // audiorw
+
+namespace audiorw::stream::bytes {
+
+auto from(const std::filesystem::path& path) { return file_byte_input_stream{path}; }
+auto to(const std::filesystem::path& path)   { return file_byte_output_stream{path}; }
+auto to(std::vector<std::byte>* vector)      { return std_vector_byte_output_stream{vector}; }
+
+} // audiorw::stream::bytes
+
+namespace audiorw::stream::frames {
+
+auto from(const ads::fully_dynamic<float>* frames) { return ads_frame_input_stream{frames}; }
+auto from(const audiorw::item* item)               { return item_frame_input_stream{item}; }
+
+} // audiorw::stream::frames
+
+namespace audiorw::stream::item {
+
+auto from(std::span<const std::byte> bytes, format_hint hint)  { return byte_item_input_stream{bytes, hint}; }
+auto from(const std::filesystem::path& path, format_hint hint) { return file_item_input_stream{path, hint}; }
+auto to(audiorw::item* item)                                   { return item_item_output_stream{item}; }
+
+} // audiorw::stream::item
 
 namespace audiorw::concepts {
 
@@ -676,8 +699,8 @@ auto read(concepts::byte_input_stream auto* in, concepts::item_output_stream aut
 [[nodiscard]]
 auto read(const std::filesystem::path& path, audiorw::format_hint hint, concepts::should_abort_fn auto should_abort) -> std::optional<item> {
 	auto item = audiorw::item{};
-	auto in   = audiorw::file_byte_input_stream{path};
-	auto out  = audiorw::item_item_output_stream{&item};
+	auto in   = audiorw::stream::bytes::from(path);
+	auto out  = audiorw::stream::item::to(&item);
 	auto result = audiorw::read(&in, &out, audiorw::format_hint::try_wav_only, should_abort);
 	if (result == audiorw::operation_result::success) { return std::move(item); }
 	else                                              { return std::nullopt; }
@@ -695,8 +718,8 @@ auto write(const audiorw::header& header, concepts::frame_input_stream auto* in,
 }
 
 auto write(const audiorw::item& item, const std::filesystem::path& path, storage_type type, concepts::should_abort_fn auto should_abort) -> operation_result {
-	auto in  = audiorw::item_frame_input_stream{&item};
-	auto out = audiorw::file_byte_output_stream{path};
+	auto in  = audiorw::stream::frames::from(&item);
+	auto out = audiorw::stream::bytes::to(path);
 	return write(item.header, &in, &out, type, should_abort);
 }
 
