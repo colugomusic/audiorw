@@ -35,8 +35,8 @@ auto example(std::filesystem::path path, std::stop_token stop) -> void {
 # Read an MP3 from other bytes that you already have in memory and write it to a WAV file
 ```c++
 auto example(std::span<const std::byte> mp3_bytes, std::filesystem::path out_file, std::stop_token stop) -> void {
-  auto in  = audiorw::byte_item_input_stream{mp3_bytes, audiorw::format_hint::try_mp3_only};
-  auto out = audiorw::file_byte_output_stream{out_file};
+  auto in  = audiorw::stream::item::from(mp3_bytes, audiorw::format_hint::try_mp3_only);
+  auto out = audiorw::stream::bytes::to(out_file);
   auto header = in.get_header();
   header.format = audiorw::format::wav;
   const auto result = audiorw::write(header, &in, &out, audiorw::storage_type::float_, fn_should_abort(stop));
@@ -53,8 +53,8 @@ auto example(std::span<const std::byte> mp3_bytes, std::filesystem::path out_fil
 ```c++
 auto example(const ads::fully_dynamic<float>* frames, std::stop_token stop) -> std::vector<std::byte> {
   auto bytes = std::vector<std::byte>{};
-  auto in    = audiorw::ads_frame_input_stream{frames};
-  auto out   = audiorw::std_vector_byte_output_stream{&bytes};
+  auto in    = audiorw::stream::frames::from(frames);
+  auto out   = audiorw::stream::bytes::to(&bytes);
   audiorw::header header;
   header.format        = audiorw::format::wavpack;
   header.channel_count = frames->get_channel_count();
