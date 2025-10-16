@@ -295,7 +295,6 @@ using formats_to_try = boost::container::small_vector<format, 4>;
 
 struct scope_ma_encoder {
 	scope_ma_encoder(ma_encoder_write_proc on_write, ma_encoder_seek_proc on_seek, void* user_data, const ma_encoder_config& config);
-	~scope_ma_encoder();
 	auto write_pcm_frames(const void* frames, ma_uint64 frame_count) -> ma_uint64;
 private:
 	using encoder_uptr = std::unique_ptr<ma_encoder, decltype(&ma_encoder_uninit)>;
@@ -409,28 +408,32 @@ auto make_wavpack_stream_reader() -> WavpackStreamReader64 {
 
 auto ma_write(const audiorw::header& header, concepts::frame_input_stream auto* in, concepts::byte_output_stream auto* out, storage_type type, concepts::should_abort_fn auto should_abort) -> operation_result {
 	using OutStream = std::remove_reference_t<decltype(*out)>;
-	auto config           = ma_encoder_config_init(to_ma_encoding_format(header.format), to_ma_format(header.bit_depth, type), header.channel_count.value, header.SR);
-	auto encoder          = scope_ma_encoder{ma_on_encoder_write<OutStream>, ma_on_encoder_seek<OutStream>, out, config};
-	auto sample_buffer    = std::vector<float>{};
-	auto frames_remaining = header.frame_count;
-	auto pos              = 0;
-	while (frames_remaining > 0UL) {
-		if (should_abort()) {
-			return operation_result::abort;
+	// Opening the scope here is important so that the encoder is destroyed before the file
+	// is closed. (miniaudio will try to keep writing to the file when the encoder is uninitialized.)
+	{
+		auto config           = ma_encoder_config_init(to_ma_encoding_format(header.format), to_ma_format(header.bit_depth, type), header.channel_count.value, header.SR);
+		auto encoder          = scope_ma_encoder{ma_on_encoder_write<OutStream>, ma_on_encoder_seek<OutStream>, out, config};
+		auto sample_buffer    = std::vector<float>{};
+		auto frames_remaining = header.frame_count;
+		auto pos              = 0;
+		while (frames_remaining > 0UL) {
+			if (should_abort()) {
+				return operation_result::abort;
+			}
+			const auto frames_to_process  = std::min(frames_remaining.value, uint64_t(CHUNK_SIZE));
+			const auto samples_to_process = header.channel_count.value * frames_to_process;
+			sample_buffer.resize(samples_to_process);
+			const auto frames_read = in->read_frames(sample_buffer);
+			if (frames_read != frames_to_process) {
+				throw std::runtime_error{"Error reading frames"};
+			}
+			const auto frames_written = encoder.write_pcm_frames(sample_buffer.data(), frames_to_process);
+			if (frames_written != frames_to_process) {
+				throw std::runtime_error{"Error writing PCM frames"};
+			}
+			frames_remaining -= frames_written;
+			pos              += frames_written;
 		}
-		const auto frames_to_process  = std::min(frames_remaining.value, uint64_t(CHUNK_SIZE));
-		const auto samples_to_process = header.channel_count.value * frames_to_process;
-		sample_buffer.resize(samples_to_process);
-		const auto frames_read = in->read_frames(sample_buffer);
-		if (frames_read != frames_to_process) {
-			throw std::runtime_error{"Error reading frames"};
-		}
-		const auto frames_written = encoder.write_pcm_frames(sample_buffer.data(), frames_to_process);
-		if (frames_written != frames_to_process) {
-			throw std::runtime_error{"Error writing PCM frames"};
-		}
-		frames_remaining -= frames_written;
-		pos              += frames_written;
 	}
 	out->commit();
 	return operation_result::success;
@@ -521,7 +524,7 @@ auto wavpack_write(const audiorw::header& header, concepts::frame_input_stream a
 
 [[nodiscard]]
 auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, concepts::should_abort_fn auto should_abort) -> try_read_result {
-	auto decoder = scope_ma_decoder{on_read, on_seek, &user_data, format};
+	auto decoder = scope_ma_decoder{on_read, on_seek, user_data, format};
 	// NOTE: For mp3s get_header() will decode the entire file immediately.
 	const auto header = decoder.get_header(format);
 	out->write_header(header);

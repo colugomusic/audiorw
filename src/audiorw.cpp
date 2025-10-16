@@ -1,3 +1,4 @@
+#include <fstream>
 #include <stdexcept>
 #define NOMINMAX
 #define MINIAUDIO_IMPLEMENTATION
@@ -58,6 +59,10 @@ atomic_file_writer::atomic_file_writer(const std::filesystem::path& path)
 	, tmp_path_{make_tmp_file_path(path)}
 	, file_{tmp_path_, std::ios::binary}
 {
+	file_.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+	if (!file_) {
+		throw std::runtime_error{std::format("Failed to open file: '{}'", tmp_path_.string())};
+	}
 }
 
 atomic_file_writer::~atomic_file_writer() {
@@ -137,10 +142,6 @@ scope_ma_encoder::scope_ma_encoder(ma_encoder_write_proc on_write, ma_encoder_se
 	if (ma_encoder_init(on_write, on_seek, user_data, &config, encoder_.get()) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to initialize encoder"};
 	}
-}
-
-scope_ma_encoder::~scope_ma_encoder() {
-	ma_encoder_uninit(encoder_.get());
 }
 
 auto scope_ma_encoder::write_pcm_frames(const void* frames, ma_uint64 frame_count) -> ma_uint64 {
@@ -463,6 +464,10 @@ auto byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 stream_bytes_from_fs_path::stream_bytes_from_fs_path(const std::filesystem::path& path)
 	: file_{path, std::ios::binary}
 {
+	file_.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+	if (!file_) {
+		throw std::runtime_error{std::format("Failed to open file: '{}'", path.string())};
+	}
 }
 
 auto stream_bytes_from_fs_path::close() -> bool {
@@ -471,6 +476,9 @@ auto stream_bytes_from_fs_path::close() -> bool {
 }
 
 auto stream_bytes_from_fs_path::get_length() -> std::optional<size_t> {
+	if (!(file_.is_open() && file_.good())) {
+		throw std::runtime_error{"Failed to get stream length"};
+	}
 	const auto pos = file_.tellg();
 	file_.seekg(0, std::ios::end);
 	const auto length = file_.tellg();
@@ -479,24 +487,36 @@ auto stream_bytes_from_fs_path::get_length() -> std::optional<size_t> {
 }
 
 auto stream_bytes_from_fs_path::get_pos() -> size_t {
+	if (!(file_.is_open() && file_.good())) {
+		throw std::runtime_error{"Failed to get stream position"};
+	}
 	return file_.tellg();
 }
 
 auto stream_bytes_from_fs_path::push_back_byte(std::byte v) -> bool {
+	if (!(file_.is_open() && file_.good())) {
+		throw std::runtime_error{"Failed to put back byte"};
+	}
 	file_.putback(static_cast<char>(v));
-	return !file_.fail();
+	return true;
 }
 
 auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_t {
 	if (buffer.size() < 1) return 0;
 	auto char_buffer = reinterpret_cast<char*>(buffer.data());
+	if (!(file_.is_open() && file_.good())) {
+		throw std::runtime_error{"Failed to read bytes"};
+	}
 	file_.read(char_buffer, buffer.size());
-	return file_.fail() ? 0 : file_.gcount();
+	return file_.gcount();
 }
 
 auto stream_bytes_from_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
+	if (!(file_.is_open() && file_.good())) {
+		throw std::runtime_error{"Failed to seek"};
+	}
 	file_.seekg(offset, mode);
-	return !file_.fail();
+	return true;
 }
 
 //########################################################################################
@@ -548,7 +568,7 @@ stream_frames_from_ads::stream_frames_from_ads(const ads::fully_dynamic<float>& 
 auto stream_frames_from_ads::read_frames(std::span<float> buffer) -> ads::frame_count {
 	const auto frames_remaining = frames_.get_frame_count().value - pos_;
 	const auto frames_to_read   = std::min(frames_remaining, buffer.size() / frames_.get_channel_count().value);
-	const auto beg              = frames_.begin();
+	const auto beg              = frames_.begin() + pos_;
 	const auto end              = beg + frames_to_read;
 	ads::interleave(std::ranges::subrange(beg, end), buffer.begin());
 	pos_ += frames_to_read;
@@ -586,10 +606,11 @@ auto stream_item_to_item::write_frames(std::span<const float> buffer) -> ads::fr
 	if (item_->header.channel_count == 0) {
 		throw std::runtime_error{"Header not written yet"};
 	}
+	const auto chs             = item_->frames.get_channel_count().value;
 	const auto space_remaining = item_->frames.get_frame_count().value - pos_;
-	const auto frames_to_write = std::min(space_remaining, buffer.size() / item_->frames.get_channel_count().value);
+	const auto frames_to_write = std::min(space_remaining, buffer.size() / chs);
 	const auto beg             = buffer.begin();
-	const auto end             = buffer.begin() + frames_to_write;
+	const auto end             = buffer.begin() + (frames_to_write * chs);
 	const auto write_pos       = item_->frames.begin() + pos_;
 	ads::deinterleave(std::ranges::subrange(beg, end), write_pos);
 	pos_ += frames_to_write;
@@ -609,15 +630,21 @@ auto stream_bytes_to_fs_path::commit() -> void {
 
 auto stream_bytes_to_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 	auto& file = writer_.stream();
+	if (!(file.is_open() && file.good())) {
+		throw std::runtime_error{"Failed to seek"};
+	}
 	file.seekp(offset, mode);
-	return !file.fail();
+	return true;
 }
 
 auto stream_bytes_to_fs_path::write_bytes(std::span<const std::byte> buffer) -> size_t {
 	const auto buffer_as_chars = reinterpret_cast<const char*>(buffer.data());
 	auto& file = writer_.stream();
+	if (!(file.is_open() && file.good())) {
+		throw std::runtime_error{"Failed to write bytes"};
+	}
 	file.write(buffer_as_chars, buffer.size());
-	return file.fail() ? 0 : buffer.size();
+	return buffer.size();
 }
 
 //########################################################################################
