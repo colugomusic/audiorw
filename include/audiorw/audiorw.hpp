@@ -647,7 +647,7 @@ auto read(concepts::byte_input_stream auto* in, concepts::item_output_stream aut
 auto fn_always(auto value) { return [value]{ return value; }; }
 
 [[nodiscard]]
-auto try_make_wavpack_decoder(concepts::byte_input_stream auto* in) -> std::optional<detail::decoder> {
+auto try_make_wavpack_decoder(concepts::byte_input_stream auto* in) -> std::unique_ptr<detail::decoder> {
 	using Stream = std::remove_reference_t<decltype(*in)>;
 	try         { return std::make_unique<scope_wavpack_reader>(make_wavpack_stream_reader<std::remove_reference_t<Stream>>(), in); }
 	catch (...) { return nullptr; }
