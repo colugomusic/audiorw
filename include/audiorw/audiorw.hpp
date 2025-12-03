@@ -67,8 +67,8 @@ struct scope_wavpack_reader {
 	auto context() { return context_; }
 	auto mode() const { return mode_; }
 private:
-	WavpackStreamReader64 stream_reader_;
 	WavpackContext* context_ = nullptr;
+	std::unique_ptr<WavpackStreamReader64> stream_reader_;
 	header header_;
 	int mode_ = 0;
 };

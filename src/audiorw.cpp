@@ -153,11 +153,11 @@ auto scope_ma_encoder::write_pcm_frames(const void* frames, ma_uint64 frame_coun
 }
 
 scope_wavpack_reader::scope_wavpack_reader(WavpackStreamReader64 stream, void* user_data)
-	: stream_reader_{stream}
+	: stream_reader_{std::make_unique<WavpackStreamReader64>(stream)}
 {
 	int flags = OPEN_2CH_MAX;
 	char error[80];
-	context_ = WavpackOpenFileInputEx64(&stream_reader_, user_data, nullptr, error, flags, 0);
+	context_ = WavpackOpenFileInputEx64(stream_reader_.get(), user_data, nullptr, error, flags, 0);
 	if (!context_) {
 		throw std::runtime_error{error};
 	}
