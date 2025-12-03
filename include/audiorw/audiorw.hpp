@@ -127,8 +127,8 @@ struct stream_item_from_bytes {
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
-	std::unique_ptr<byte_input_stream> in_;
 	detail::decoder decoder_;
+	std::unique_ptr<byte_input_stream> in_;
 };
 
 struct stream_bytes_from_fs_path {
@@ -159,8 +159,8 @@ struct stream_item_from_fs_path {
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
-	stream_bytes_from_fs_path in_;
 	detail::decoder decoder_;
+	stream_bytes_from_fs_path in_;
 };
 
 struct stream_frames_from_item {
