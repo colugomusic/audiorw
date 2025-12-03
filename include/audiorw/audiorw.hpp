@@ -649,14 +649,14 @@ auto fn_always(auto value) { return [value]{ return value; }; }
 [[nodiscard]]
 auto try_make_wavpack_decoder(concepts::byte_input_stream auto* in) -> std::unique_ptr<detail::decoder> {
 	using Stream = std::remove_reference_t<decltype(*in)>;
-	try         { return std::make_unique<scope_wavpack_reader>(make_wavpack_stream_reader<std::remove_reference_t<Stream>>(), in); }
+	try         { return std::make_unique<detail::decoder>(scope_wavpack_reader{make_wavpack_stream_reader<std::remove_reference_t<Stream>>(), in}); }
 	catch (...) { return nullptr; }
 }
 
 [[nodiscard]]
 auto try_make_ma_decoder(concepts::byte_input_stream auto* in, audiorw::format format) -> std::unique_ptr<detail::decoder> {
 	using Stream = std::remove_reference_t<decltype(*in)>;
-	try         { return std::make_unique<scope_ma_decoder>(ma_on_decoder_read<Stream>, ma_on_decoder_seek<Stream>, in, format); }
+	try         { return std::make_unique<detail::decoder>(scope_ma_decoder{ma_on_decoder_read<Stream>, ma_on_decoder_seek<Stream>, in, format}); }
 	catch (...) { return nullptr; }
 }
 
