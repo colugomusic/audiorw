@@ -457,9 +457,6 @@ auto wavpack_write_float_chunks(const audiorw::header& header, concepts::frame_i
 		}
 		const auto buffer_as_ints = reinterpret_cast<int32_t*>(sample_buffer.data());
 		const auto frames_written = WavpackPackSamples(context, buffer_as_ints, frames_to_process);
-		if (frames_written != frames_to_process) {
-			throw std::runtime_error{"Error packing WavPack samples"};
-		}
 		frames_remaining -= frames_to_process;
 		pos              += frames_to_process;
 	}
@@ -489,9 +486,6 @@ auto wavpack_write_int_chunks(const audiorw::header& header, concepts::frame_inp
 			buffer_as_ints[i] = static_cast<int32_t>(double(sample_buffer[i]) * int_scale);
 		}
 		const auto frames_written = WavpackPackSamples(context, buffer_as_ints, frames_to_process);
-		if (frames_written != frames_to_process) {
-			throw std::runtime_error{"Error packing WavPack samples"};
-		}
 		frames_remaining -= frames_to_process;
 		pos              += frames_to_process;
 	}
