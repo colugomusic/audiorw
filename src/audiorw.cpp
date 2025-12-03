@@ -532,15 +532,15 @@ stream_item_from_bytes::stream_item_from_bytes(std::span<const std::byte> bytes,
 }
 
 auto stream_item_from_bytes::get_header() const -> header {
-	return detail::get_header(&decoder_);
+	return detail::get_header(decoder_.get());
 }
 
 auto stream_item_from_bytes::read_frames(std::span<float> buffer) -> ads::frame_count {
-	return detail::read_frames(&decoder_, buffer);
+	return detail::read_frames(decoder_.get(), buffer);
 }
 
 auto stream_item_from_bytes::seek(ads::frame_idx pos) -> bool {
-	return detail::seek(&decoder_, pos);
+	return detail::seek(decoder_.get(), pos);
 }
 
 //########################################################################################
@@ -552,15 +552,15 @@ stream_item_from_fs_path::stream_item_from_fs_path(const std::filesystem::path& 
 }
 
 auto stream_item_from_fs_path::get_header() const -> header {
-	return detail::get_header(&decoder_);
+	return detail::get_header(decoder_.get());
 }
 
 auto stream_item_from_fs_path::read_frames(std::span<float> buffer) -> ads::frame_count {
-	return detail::read_frames(&decoder_, buffer);
+	return detail::read_frames(decoder_.get(), buffer);
 }
 
 auto stream_item_from_fs_path::seek(ads::frame_idx pos) -> bool {
-	return detail::seek(&decoder_, pos);
+	return detail::seek(decoder_.get(), pos);
 }
 
 //########################################################################################

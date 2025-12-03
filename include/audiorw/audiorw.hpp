@@ -127,7 +127,7 @@ struct stream_item_from_bytes {
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
-	detail::decoder decoder_;
+	std::unique_ptr<detail::decoder> decoder_;
 	std::unique_ptr<byte_input_stream> in_;
 };
 
@@ -159,7 +159,7 @@ struct stream_item_from_fs_path {
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
-	detail::decoder decoder_;
+	std::unique_ptr<detail::decoder> decoder_;
 	stream_bytes_from_fs_path in_;
 };
 
@@ -649,19 +649,19 @@ auto fn_always(auto value) { return [value]{ return value; }; }
 [[nodiscard]]
 auto try_make_wavpack_decoder(concepts::byte_input_stream auto* in) -> std::optional<detail::decoder> {
 	using Stream = std::remove_reference_t<decltype(*in)>;
-	try         { return scope_wavpack_reader{make_wavpack_stream_reader<std::remove_reference_t<Stream>>(), in}; }
-	catch (...) { return std::nullopt; }
+	try         { return std::make_unique<scope_wavpack_reader>(make_wavpack_stream_reader<std::remove_reference_t<Stream>>(), in); }
+	catch (...) { return nullptr; }
 }
 
 [[nodiscard]]
-auto try_make_ma_decoder(concepts::byte_input_stream auto* in, audiorw::format format) -> std::optional<detail::decoder> {
+auto try_make_ma_decoder(concepts::byte_input_stream auto* in, audiorw::format format) -> std::unique_ptr<detail::decoder> {
 	using Stream = std::remove_reference_t<decltype(*in)>;
-	try         { return scope_ma_decoder{ma_on_decoder_read<Stream>, ma_on_decoder_seek<Stream>, in, format}; }
-	catch (...) { return std::nullopt; }
+	try         { return std::make_unique<scope_ma_decoder>(ma_on_decoder_read<Stream>, ma_on_decoder_seek<Stream>, in, format); }
+	catch (...) { return nullptr; }
 }
 
 [[nodiscard]]
-auto try_make_decoder(concepts::byte_input_stream auto* in, audiorw::format format) -> std::optional<detail::decoder> {
+auto try_make_decoder(concepts::byte_input_stream auto* in, audiorw::format format) -> std::unique_ptr<detail::decoder> {
 	switch (format) {
 		case audiorw::format::wavpack: { return try_make_wavpack_decoder(in); }
 		default:                       { return try_make_ma_decoder(in, format); }
@@ -669,11 +669,11 @@ auto try_make_decoder(concepts::byte_input_stream auto* in, audiorw::format form
 }
 
 [[nodiscard]]
-auto make_decoder(concepts::byte_input_stream auto* in, format_hint hint) -> detail::decoder {
+auto make_decoder(concepts::byte_input_stream auto* in, format_hint hint) -> std::unique_ptr<detail::decoder> {
 	const auto formats_to_try = detail::get_formats_to_try(hint);
 	for (auto format : formats_to_try) {
 		if (auto decoder = try_make_decoder(in, format)) {
-			return std::move(decoder).value();
+			return decoder;
 		}
 		in->seek(0, std::ios::beg);
 	}
