@@ -513,7 +513,7 @@ auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_
 
 auto stream_bytes_from_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 	if (!(file_.is_open() && file_.good())) {
-		throw std::runtime_error{"Failed to seek"};
+		return false;
 	}
 	file_.seekg(offset, mode);
 	return true;
