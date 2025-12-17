@@ -59,7 +59,7 @@ atomic_file_writer::atomic_file_writer(const std::filesystem::path& path)
 	, tmp_path_{make_tmp_file_path(path)}
 	, file_{tmp_path_, std::ios::binary}
 {
-	file_.exceptions(std::ifstream::badbit);
+	file_.exceptions(std::ifstream::failbit | std::ifstream::badbit);
 	if (!file_) {
 		throw std::runtime_error{std::format("Failed to open file: '{}'", tmp_path_.string())};
 	}
@@ -464,7 +464,7 @@ auto byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 stream_bytes_from_fs_path::stream_bytes_from_fs_path(const std::filesystem::path& path)
 	: file_{path, std::ios::binary}
 {
-	file_.exceptions(std::ifstream::badbit);
+	file_.exceptions(std::ifstream::failbit | std::ifstream::badbit);
 	if (!file_) {
 		throw std::runtime_error{std::format("Failed to open file: '{}'", path.string())};
 	}
