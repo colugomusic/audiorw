@@ -507,8 +507,7 @@ auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_
 	if (!(file_.is_open() && file_.good())) {
 		throw std::runtime_error{"Failed to read bytes"};
 	}
-	try         { file_.read(char_buffer, buffer.size()); }
-	catch (...) {}
+	file_.read(char_buffer, buffer.size());
 	return file_.gcount();
 }
 
