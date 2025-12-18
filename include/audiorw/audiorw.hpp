@@ -449,7 +449,6 @@ auto wavpack_write_float_chunks(const audiorw::header& header, concepts::frame_i
 	assert (header.frame_count);
 	auto sample_buffer    = std::vector<float>{};
 	auto frames_remaining = header.frame_count.value();
-	auto pos              = 0;
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
 			return operation_result::abort;
@@ -464,7 +463,6 @@ auto wavpack_write_float_chunks(const audiorw::header& header, concepts::frame_i
 		const auto buffer_as_ints = reinterpret_cast<int32_t*>(sample_buffer.data());
 		const auto frames_written = WavpackPackSamples(context, buffer_as_ints, frames_to_process);
 		frames_remaining -= frames_to_process;
-		pos              += frames_to_process;
 	}
 	return operation_result::success;
 }
@@ -527,7 +525,7 @@ auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format,
 	const auto header = decoder.get_header(format, {.frame_count_required = true});
 	out->write_header(header);
 	auto buffer           = std::vector<float>{};
-	auto frames_remaining = header.frame_count;
+	auto frames_remaining = header.frame_count.value();
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
 			return try_read_result::abort;
@@ -557,8 +555,9 @@ auto ma_try_read(concepts::byte_input_stream auto* in, concepts::item_output_str
 
 [[nodiscard]]
 auto wavpack_read_float_chunks(concepts::item_output_stream auto* out, WavpackContext* context, const audiorw::header& header, concepts::should_abort_fn auto should_abort) -> operation_result {
+	assert (header.frame_count);
 	auto buffer           = std::vector<float>{};
-	auto frames_remaining = header.frame_count;
+	auto frames_remaining = header.frame_count.value();
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
 			return operation_result::abort;
@@ -583,9 +582,10 @@ auto wavpack_read_float_chunks(concepts::item_output_stream auto* out, WavpackCo
 [[nodiscard]]
 auto wavpack_read_int_chunks(concepts::item_output_stream auto* out, WavpackContext* context, const audiorw::header& header, concepts::should_abort_fn auto should_abort) -> operation_result {
 	static_assert (sizeof(float) == sizeof(int32_t));
+	assert (header.frame_count);
 	const auto divisor    = (1 << (header.bit_depth - 1)) - 1;
 	auto buffer           = std::vector<float>{};
-	auto frames_remaining = header.frame_count;
+	auto frames_remaining = header.frame_count.value();
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
 			return operation_result::abort;
