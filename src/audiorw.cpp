@@ -111,7 +111,7 @@ auto scope_ma_decoder::get_header(audiorw::format format, get_header_options opt
 	out.bit_depth     = get_bit_depth(dec_format);
 	out.format        = format;
 	out.channel_count = {dec_channels};
-	if (options.frame_count_required) {
+	if (format != audiorw::format::mp3 || options.frame_count_required) {
 		ma_uint64 dec_length;
 		if (ma_decoder_get_length_in_pcm_frames(decoder_.get(), &dec_length) != MA_SUCCESS) {
 			throw std::runtime_error{"Failed to get frame count from decoder"};

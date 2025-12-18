@@ -25,4 +25,5 @@ TEST_CASE("stream::item::from(wav).get_header()") {
 	REQUIRE(header.SR == 8000);
 	REQUIRE(header.bit_depth == 32);
 	REQUIRE(header.channel_count == 2);
+	REQUIRE(header.frame_count.has_value());
 }
