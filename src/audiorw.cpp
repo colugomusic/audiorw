@@ -59,7 +59,7 @@ atomic_file_writer::atomic_file_writer(const std::filesystem::path& path)
 	, tmp_path_{make_tmp_file_path(path)}
 	, file_{tmp_path_, std::ios::binary}
 {
-	file_.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+	file_.exceptions(std::ifstream::badbit);
 	if (!file_) {
 		throw std::runtime_error{std::format("Failed to open file: '{}'", tmp_path_.string())};
 	}
@@ -464,7 +464,7 @@ auto byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 stream_bytes_from_fs_path::stream_bytes_from_fs_path(const std::filesystem::path& path)
 	: file_{path, std::ios::binary}
 {
-	file_.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+	file_.exceptions(std::ifstream::badbit);
 	if (!file_) {
 		throw std::runtime_error{std::format("Failed to open file: '{}'", path.string())};
 	}
@@ -476,7 +476,7 @@ auto stream_bytes_from_fs_path::close() -> bool {
 }
 
 auto stream_bytes_from_fs_path::get_length() -> std::optional<size_t> {
-	if (!(file_.is_open() && file_.good())) {
+	if (!file_.is_open() || file_.bad()) {
 		throw std::runtime_error{"Failed to get stream length"};
 	}
 	const auto pos = file_.tellg();
@@ -487,14 +487,14 @@ auto stream_bytes_from_fs_path::get_length() -> std::optional<size_t> {
 }
 
 auto stream_bytes_from_fs_path::get_pos() -> size_t {
-	if (!(file_.is_open() && file_.good())) {
+	if (!file_.is_open() || file_.bad()) {
 		throw std::runtime_error{"Failed to get stream position"};
 	}
 	return file_.tellg();
 }
 
 auto stream_bytes_from_fs_path::push_back_byte(std::byte v) -> bool {
-	if (!(file_.is_open() && file_.good())) {
+	if (!file_.is_open() || file_.bad()) {
 		throw std::runtime_error{"Failed to put back byte"};
 	}
 	file_.putback(static_cast<char>(v));
@@ -504,7 +504,7 @@ auto stream_bytes_from_fs_path::push_back_byte(std::byte v) -> bool {
 auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_t {
 	if (buffer.size() < 1) return 0;
 	auto char_buffer = reinterpret_cast<char*>(buffer.data());
-	if (!(file_.is_open() && file_.good())) {
+	if (!file_.is_open() || file_.bad()) {
 		throw std::runtime_error{"Failed to read bytes"};
 	}
 	file_.read(char_buffer, buffer.size());
@@ -512,7 +512,7 @@ auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_
 }
 
 auto stream_bytes_from_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
-	if (!(file_.is_open() && file_.good())) {
+	if (!file_.is_open()) {
 		throw std::runtime_error{"Failed to seek"};
 	}
 	file_.seekg(offset, mode);
@@ -634,7 +634,7 @@ auto stream_bytes_to_fs_path::commit() -> void {
 
 auto stream_bytes_to_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 	auto& file = writer_.stream();
-	if (!(file.is_open() && file.good())) {
+	if (!file.is_open() || file.bad()) {
 		throw std::runtime_error{"Failed to seek"};
 	}
 	file.seekp(offset, mode);
@@ -644,7 +644,7 @@ auto stream_bytes_to_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bo
 auto stream_bytes_to_fs_path::write_bytes(std::span<const std::byte> buffer) -> size_t {
 	const auto buffer_as_chars = reinterpret_cast<const char*>(buffer.data());
 	auto& file = writer_.stream();
-	if (!(file.is_open() && file.good())) {
+	if (!file.is_open() || file.bad()) {
 		throw std::runtime_error{"Failed to write bytes"};
 	}
 	file.write(buffer_as_chars, buffer.size());

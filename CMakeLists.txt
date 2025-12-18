@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.30)
 project(audiorw)
+enable_testing()
 find_package(ads REQUIRED)
 find_package(Boost REQUIRED COMPONENTS headers CONFIG)
 find_package(miniaudio REQUIRED)
@@ -41,6 +42,9 @@ target_compile_definitions(audiorw PUBLIC
 	MA_NO_WEBAUDIO
 	MA_NO_WINMM
 )
+if (BUILD_TESTING)
+	add_subdirectory(test)
+endif()
 include(CMakePackageConfigHelpers)
 install(TARGETS audiorw EXPORT audiorw-targets FILE_SET HEADERS DESTINATION include/audiorw)
 install(EXPORT audiorw-targets FILE audiorw-targets.cmake NAMESPACE audiorw:: DESTINATION lib/cmake/audiorw)
