@@ -1,4 +1,5 @@
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #define NOMINMAX
 #define MINIAUDIO_IMPLEMENTATION
@@ -98,29 +99,30 @@ scope_ma_decoder::scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek
 	}
 }
 
-auto scope_ma_decoder::get_header(audiorw::format format) const -> header {
+auto scope_ma_decoder::get_header(audiorw::format format, get_header_options options) const -> header {
 	ma_format dec_format;
 	ma_uint32 dec_channels;
 	ma_uint32 dec_SR;
-	ma_uint64 dec_length;
 	if (ma_decoder_get_data_format(decoder_.get(), &dec_format, &dec_channels, &dec_SR, nullptr, 0) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to get data format from decoder"};
-	}
-	// NOTE: For MP3s this will have to decode the entire file at this point
-	if (ma_decoder_get_length_in_pcm_frames(decoder_.get(), &dec_length) != MA_SUCCESS) {
-		throw std::runtime_error{"Failed to get frame count from decoder"};
 	}
 	header out;
 	out.SR            = dec_SR;
 	out.bit_depth     = get_bit_depth(dec_format);
 	out.format        = format;
 	out.channel_count = {dec_channels};
-	out.frame_count   = {dec_length};
+	if (options.frame_count_required) {
+		ma_uint64 dec_length;
+		if (ma_decoder_get_length_in_pcm_frames(decoder_.get(), &dec_length) != MA_SUCCESS) {
+			throw std::runtime_error{"Failed to get frame count from decoder"};
+		}
+		out.frame_count = {dec_length};
+	}
 	return out;
 }
 
-auto scope_ma_decoder::get_header() const -> header {
-	return get_header(get_format(*decoder_));
+auto scope_ma_decoder::get_header(get_header_options options) const -> header {
+	return get_header(get_format(*decoder_), options);
 }
 
 auto scope_ma_decoder::read_pcm_frames(void* frames, ma_uint64 frame_count) -> ma_uint64 {
@@ -195,7 +197,7 @@ scope_wavpack_writer::scope_wavpack_writer(const audiorw::header& header, storag
 	: context_{WavpackOpenFileOutput(blockout, user_data, nullptr)}
 {
 	auto config = make_wavpack_config(header, type);
-	if (!WavpackSetConfiguration64(context_, &config, header.frame_count.value, nullptr)) {
+	if (!WavpackSetConfiguration64(context_, &config, header.frame_count->value, nullptr)) {
 		throw std::runtime_error(WavpackGetErrorMessage(context_));
 	}
 	if (!WavpackPackInit(context_)) {
@@ -342,15 +344,18 @@ auto find_format_info(std::string_view ext) -> std::optional<format_info> {
 
 auto stream_read_float_frames(scope_wavpack_reader* stream, std::span<float> buffer) -> ads::frame_count {
 	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer.data());
-	return {WavpackUnpackSamples(stream->context(), buffer_as_ints, buffer.size())};
+	const auto& header        = stream->get_header();
+	const auto frames_to_read = buffer.size() / header.channel_count.value;
+	return {WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read)};
 }
 
 auto stream_read_int_frames(scope_wavpack_reader* stream, std::span<float> buffer) -> ads::frame_count {
 	auto buffer_as_ints = reinterpret_cast<int32_t*>(buffer.data());
-	const auto& header     = stream->get_header();
-	const auto frames_read = WavpackUnpackSamples(stream->context(), buffer_as_ints, buffer.size());
-	const auto chs         = header.channel_count.value;
-	const auto divisor     = (1 < (header.bit_depth -1 )) - 1;
+	const auto& header        = stream->get_header();
+	const auto frames_to_read = buffer.size() / header.channel_count.value;
+	const auto frames_read    = WavpackUnpackSamples(stream->context(), buffer_as_ints, frames_to_read);
+	const auto chs            = header.channel_count.value;
+	const auto divisor        = (1 < (header.bit_depth -1 )) - 1;
 	for (auto i = 0; i < frames_read * chs; i++) {
 		buffer[i] = static_cast<float>(buffer_as_ints[i]) / divisor;
 	}
@@ -367,24 +372,26 @@ auto seek(scope_wavpack_reader* decoder, ads::frame_idx pos) -> bool {
 	return WavpackSeekSample64(decoder->context(), pos.value) == 1;
 }
 
-auto get_header(const scope_wavpack_reader* decoder) -> header {
+auto get_header(const scope_wavpack_reader* decoder, get_header_options options = {}) -> header {
 	return decoder->get_header();
 }
 
-auto get_header(const scope_ma_decoder* decoder) -> header {
-	return decoder->get_header();
+auto get_header(const scope_ma_decoder* decoder, get_header_options options = {}) -> header {
+	return decoder->get_header(options);
 }
 
 auto read_frames(scope_ma_decoder* decoder, std::span<float> buffer) -> ads::frame_count {
-	return {decoder->read_pcm_frames(buffer.data(), buffer.size())};
+	const auto header         = get_header(decoder);
+	const auto frames_to_read = buffer.size() / header.channel_count.value;
+	return {decoder->read_pcm_frames(buffer.data(), frames_to_read)};
 }
 
 auto seek(scope_ma_decoder* decoder, ads::frame_idx pos) -> bool {
 	return decoder->seek_to_pcm_frame(pos.value) == MA_SUCCESS;
 }
 
-auto get_header(const detail::decoder* decoder) -> header {
-	return std::visit([](auto& decoder){ return get_header(&decoder); }, *decoder);
+auto get_header(const detail::decoder* decoder, get_header_options options) -> header {
+	return std::visit([options](auto& decoder){ return get_header(&decoder, options); }, *decoder);
 }
 
 auto read_frames(detail::decoder* decoder, std::span<float> buffer) -> ads::frame_count {
@@ -498,21 +505,33 @@ auto stream_bytes_from_fs_path::push_back_byte(std::byte v) -> bool {
 		throw std::runtime_error{"Failed to put back byte"};
 	}
 	file_.putback(static_cast<char>(v));
+	if (file_.bad()) {
+		throw std::runtime_error{"Failed to put back byte"};
+	}
 	return true;
 }
 
 auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_t {
-	if (buffer.size() < 1) return 0;
+	if (buffer.size() < 1) { return 0; }
 	auto char_buffer = reinterpret_cast<char*>(buffer.data());
 	if (!file_.is_open() || file_.bad()) {
 		throw std::runtime_error{"Failed to read bytes"};
 	}
+	if (file_.eof()) {
+		return 0;
+	}
 	file_.read(char_buffer, buffer.size());
+	if (file_.bad()) {
+		throw std::runtime_error{"Failed to read bytes"};
+	}
+	if (file_.eof()) {
+		file_.clear(std::ios_base::eofbit);
+	}
 	return file_.gcount();
 }
 
 auto stream_bytes_from_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
-	if (!file_.is_open()) {
+	if (!file_.is_open() || file_.bad()) {
 		throw std::runtime_error{"Failed to seek"};
 	}
 	file_.seekg(offset, mode);
@@ -531,8 +550,8 @@ stream_item_from_bytes::stream_item_from_bytes(std::span<const std::byte> bytes,
 	decoder_ = detail::make_decoder(in_.get(), hint);
 }
 
-auto stream_item_from_bytes::get_header() const -> header {
-	return detail::get_header(decoder_.get());
+auto stream_item_from_bytes::get_header(get_header_options options) const -> header {
+	return detail::get_header(decoder_.get(), options);
 }
 
 auto stream_item_from_bytes::read_frames(std::span<float> buffer) -> ads::frame_count {
@@ -551,8 +570,8 @@ stream_item_from_fs_path::stream_item_from_fs_path(const std::filesystem::path& 
 	decoder_ = detail::make_decoder(&in_, hint);
 }
 
-auto stream_item_from_fs_path::get_header() const -> header {
-	return detail::get_header(decoder_.get());
+auto stream_item_from_fs_path::get_header(get_header_options options) const -> header {
+	return detail::get_header(decoder_.get(), options);
 }
 
 auto stream_item_from_fs_path::read_frames(std::span<float> buffer) -> ads::frame_count {
@@ -603,7 +622,7 @@ auto stream_item_to_item::seek(ads::frame_idx pos) -> bool {
 
 auto stream_item_to_item::write_header(audiorw::header header) -> void {
 	item_->header = header;
-	item_->frames = ads::make<float>(header.channel_count, header.frame_count);
+	item_->frames = ads::make<float>(header.channel_count, header.frame_count.value());
 }
 
 auto stream_item_to_item::write_frames(std::span<const float> buffer) -> ads::frame_count {

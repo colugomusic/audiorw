@@ -22,10 +22,16 @@ enum class format {
 struct header {
 	audiorw::format format;
 	ads::channel_count channel_count;
-	ads::frame_count frame_count;
+	// For MP3s, the entire file needs to be read into memory to get
+	// the frame count, which won't happen by default.
+	// To force this to happen, use get_header({.frame_count_required = true }).
+	// Otherwise this will be unset for MP3s.
+	std::optional<ads::frame_count> frame_count;
 	int SR        = 44100;
 	int bit_depth = 32;
 };
+
+struct get_header_options { bool frame_count_required = false; };
 
 } // audiorw
 
@@ -49,8 +55,8 @@ private:
 
 struct scope_ma_decoder {
 	scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, audiorw::format format);
-	auto get_header() const -> header;
-	auto get_header(audiorw::format format) const -> header;
+	auto get_header(get_header_options options = {}) const -> header;
+	auto get_header(audiorw::format format, get_header_options options = {}) const -> header;
 	auto read_pcm_frames(void* frames, ma_uint64 frame_count) -> ma_uint64;
 	auto seek_to_pcm_frame(ma_uint64 frame) -> ma_result;
 private:
@@ -122,8 +128,7 @@ private:
 
 struct stream_item_from_bytes {
 	stream_item_from_bytes(std::span<const std::byte> bytes, format_hint hint);
-	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
-	auto get_header() const -> header;
+	auto get_header(get_header_options = {}) const -> header;
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
@@ -154,8 +159,7 @@ private:
 
 struct stream_item_from_fs_path {
 	stream_item_from_fs_path(const std::filesystem::path& path, format_hint hint);
-	// NOTE: For mp3s get_header() will have to decode the entire file immediately.
-	auto get_header() const -> header;
+	auto get_header(get_header_options = {}) const -> header;
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
@@ -310,7 +314,7 @@ private:
 };
 
 [[nodiscard]] auto get_formats_to_try(format_hint hint) -> formats_to_try;
-[[nodiscard]] auto get_header(const detail::decoder* decoder) -> header;
+[[nodiscard]] auto get_header(const detail::decoder* decoder, get_header_options = {}) -> header;
 [[nodiscard]] auto ma_to_std_seek_mode(ma_seek_origin) -> std::ios_base::seekdir;
 [[nodiscard]] auto make_wavpack_config(const audiorw::header& header, storage_type type) -> WavpackConfig;
 [[nodiscard]] auto read_frames(detail::decoder* decoder, float* buffer, ads::frame_count frames_to_read) -> ads::frame_count;
@@ -519,8 +523,7 @@ auto wavpack_write(const audiorw::header& header, concepts::frame_input_stream a
 [[nodiscard]]
 auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, concepts::should_abort_fn auto should_abort) -> try_read_result {
 	auto decoder = scope_ma_decoder{on_read, on_seek, user_data, format};
-	// NOTE: For mp3s get_header() will decode the entire file immediately.
-	const auto header = decoder.get_header(format);
+	const auto header = decoder.get_header(format, {.frame_count_required = true});
 	out->write_header(header);
 	auto buffer           = std::vector<float>{};
 	auto frames_remaining = header.frame_count;
