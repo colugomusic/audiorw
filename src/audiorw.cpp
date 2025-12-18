@@ -565,9 +565,9 @@ auto stream_item_from_bytes::seek(ads::frame_idx pos) -> bool {
 //########################################################################################
 
 stream_item_from_fs_path::stream_item_from_fs_path(const std::filesystem::path& path, format_hint hint)
-	: in_{path}
+	: in_{std::make_unique<stream_bytes_from_fs_path>(path)}
 {
-	decoder_ = detail::make_decoder(&in_, hint);
+	decoder_ = detail::make_decoder(in_.get(), hint);
 }
 
 auto stream_item_from_fs_path::get_header(get_header_options options) const -> header {
