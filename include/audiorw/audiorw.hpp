@@ -476,7 +476,6 @@ auto wavpack_write_int_chunks(const audiorw::header& header, concepts::frame_inp
 	const auto int_scale  = (1 << (header.bit_depth - 1)) - 1;
 	auto sample_buffer    = std::vector<float>{};
     auto frames_remaining = header.frame_count.value();
-	auto pos              = 0;
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
 			return operation_result::abort;
@@ -492,9 +491,8 @@ auto wavpack_write_int_chunks(const audiorw::header& header, concepts::frame_inp
 		for (int i = 0; i < sample_buffer.size(); i++) {
 			buffer_as_ints[i] = static_cast<int32_t>(double(sample_buffer[i]) * int_scale);
 		}
-		const auto frames_written = WavpackPackSamples(context, buffer_as_ints, frames_to_process);
+		WavpackPackSamples(context, buffer_as_ints, frames_to_process);
 		frames_remaining -= frames_to_process;
-		pos              += frames_to_process;
 	}
 	return operation_result::success;
 }
