@@ -415,10 +415,11 @@ auto ma_write(const audiorw::header& header, concepts::frame_input_stream auto* 
 	// Opening the scope here is important so that the encoder is destroyed before the file
 	// is closed. (miniaudio will try to keep writing to the file when the encoder is uninitialized.)
 	{
+		assert (header.frame_count);
 		auto config           = ma_encoder_config_init(to_ma_encoding_format(header.format), to_ma_format(header.bit_depth, type), header.channel_count.value, header.SR);
 		auto encoder          = scope_ma_encoder{ma_on_encoder_write<OutStream>, ma_on_encoder_seek<OutStream>, out, config};
 		auto sample_buffer    = std::vector<float>{};
-		auto frames_remaining = header.frame_count;
+		auto frames_remaining = header.frame_count.value();
 		auto pos              = 0;
 		while (frames_remaining > 0UL) {
 			if (should_abort()) {
@@ -445,8 +446,9 @@ auto ma_write(const audiorw::header& header, concepts::frame_input_stream auto* 
 
 [[nodiscard]]
 auto wavpack_write_float_chunks(const audiorw::header& header, concepts::frame_input_stream auto* in, WavpackContext* context, concepts::should_abort_fn auto should_abort) -> operation_result {
+	assert (header.frame_count);
 	auto sample_buffer    = std::vector<float>{};
-    auto frames_remaining = header.frame_count;
+	auto frames_remaining = header.frame_count.value();
 	auto pos              = 0;
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
@@ -470,9 +472,10 @@ auto wavpack_write_float_chunks(const audiorw::header& header, concepts::frame_i
 [[nodiscard]]
 auto wavpack_write_int_chunks(const audiorw::header& header, concepts::frame_input_stream auto* in, WavpackContext* context, concepts::should_abort_fn auto should_abort) -> operation_result {
 	static_assert (sizeof(float) == sizeof(int32_t));
+	assert (header.frame_count);
 	const auto int_scale  = (1 << (header.bit_depth - 1)) - 1;
 	auto sample_buffer    = std::vector<float>{};
-    auto frames_remaining = header.frame_count;
+    auto frames_remaining = header.frame_count.value();
 	auto pos              = 0;
 	while (frames_remaining > 0UL) {
 		if (should_abort()) {
