@@ -141,11 +141,13 @@ struct stream_bytes_from_fs_path {
 	auto close() -> bool;
 	auto get_length() -> std::optional<size_t>;
 	auto get_pos() -> size_t;
+	auto get_total_bytes_read() const -> size_t;
 	auto push_back_byte(std::byte v) -> bool;
 	auto read_bytes(std::span<std::byte> buffer) -> size_t;
 	auto seek(int64_t offset, std::ios::seekdir mode) -> bool;
 private:
 	std::ifstream file_;
+	size_t total_bytes_read_ = 0;
 };
 
 struct stream_bytes_to_fs_path {
@@ -160,6 +162,7 @@ private:
 struct stream_item_from_fs_path {
 	stream_item_from_fs_path(const std::filesystem::path& path, format_hint hint);
 	auto get_header(get_header_options = {}) const -> header;
+	auto get_total_bytes_read() const -> size_t;
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:

@@ -500,6 +500,10 @@ auto stream_bytes_from_fs_path::get_pos() -> size_t {
 	return file_.tellg();
 }
 
+auto stream_bytes_from_fs_path::get_total_bytes_read() const -> size_t {
+	return total_bytes_read_;
+}
+
 auto stream_bytes_from_fs_path::push_back_byte(std::byte v) -> bool {
 	if (!file_.is_open() || file_.bad()) {
 		throw std::runtime_error{"Failed to put back byte"};
@@ -527,7 +531,9 @@ auto stream_bytes_from_fs_path::read_bytes(std::span<std::byte> buffer) -> size_
 	if (file_.eof()) {
 		file_.clear(std::ios_base::eofbit);
 	}
-	return file_.gcount();
+	const auto bytes_read = file_.gcount();
+	total_bytes_read_ += bytes_read;
+	return bytes_read;
 }
 
 auto stream_bytes_from_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> bool {
@@ -572,6 +578,10 @@ stream_item_from_fs_path::stream_item_from_fs_path(const std::filesystem::path& 
 
 auto stream_item_from_fs_path::get_header(get_header_options options) const -> header {
 	return detail::get_header(decoder_.get(), options);
+}
+
+auto stream_item_from_fs_path::get_total_bytes_read() const -> size_t {
+	return in_->get_total_bytes_read();
 }
 
 auto stream_item_from_fs_path::read_frames(std::span<float> buffer) -> ads::frame_count {
