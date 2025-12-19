@@ -89,7 +89,18 @@ auto atomic_file_writer::stream() -> std::ofstream& {
 	return file_;
 }
 
-scope_ma_decoder::scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, audiorw::format format)
+[[nodiscard]] static
+auto ma_get_stream_length(ma_decoder* decoder, ma_decoder_seek_proc seek, ma_decoder_tell_proc tell) -> size_t {
+	ma_int64 pos;
+	ma_int64 len;
+	if (tell(decoder, &pos) != MA_SUCCESS)                      { throw std::runtime_error{"Failed to get stream length"}; }
+	if (seek(decoder, 0, ma_seek_origin_end) != MA_SUCCESS)     { throw std::runtime_error{"Failed to get stream length"}; }
+	if (tell(decoder, &len) != MA_SUCCESS)                      { throw std::runtime_error{"Failed to get stream length"}; }
+	if (seek(decoder, pos, ma_seek_origin_start) != MA_SUCCESS) { throw std::runtime_error{"Failed to get stream length"}; }
+	return static_cast<size_t>(len);
+}
+
+scope_ma_decoder::scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, ma_decoder_tell_proc on_tell, void* user_data, audiorw::format format)
 	: decoder_{std::make_unique<ma_decoder>().release(), &ma_decoder_uninit}
 {
 	auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
@@ -97,6 +108,7 @@ scope_ma_decoder::scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek
 	if (ma_decoder_init(on_read, on_seek, user_data, &config, decoder_.get()) != MA_SUCCESS) {
 		throw std::runtime_error{"Failed to initialize decoder"};
 	}
+	stream_length_ = ma_get_stream_length(decoder_.get(), on_seek, on_tell);
 }
 
 auto scope_ma_decoder::get_header(audiorw::format format, get_header_options options) const -> header {
@@ -111,6 +123,7 @@ auto scope_ma_decoder::get_header(audiorw::format format, get_header_options opt
 	out.bit_depth     = get_bit_depth(dec_format);
 	out.format        = format;
 	out.channel_count = {dec_channels};
+	out.stream_length = stream_length_;
 	if (format != audiorw::format::mp3 || options.frame_count_required) {
 		ma_uint64 dec_length;
 		if (ma_decoder_get_length_in_pcm_frames(decoder_.get(), &dec_length) != MA_SUCCESS) {
@@ -168,6 +181,7 @@ scope_wavpack_reader::scope_wavpack_reader(WavpackStreamReader64 stream, void* u
 	header_.channel_count = {static_cast<uint64_t>(WavpackGetNumChannels(context_))};
 	header_.frame_count   = {static_cast<uint64_t>(WavpackGetNumSamples64(context_))};
 	header_.SR            = WavpackGetSampleRate(context_);
+	header_.stream_length = stream.get_length(user_data);
 	mode_                 = WavpackGetMode(context_);
 }
 
@@ -372,10 +386,12 @@ auto seek(scope_wavpack_reader* decoder, ads::frame_idx pos) -> bool {
 	return WavpackSeekSample64(decoder->context(), pos.value) == 1;
 }
 
+[[nodiscard]] static
 auto get_header(const scope_wavpack_reader* decoder, get_header_options options = {}) -> header {
 	return decoder->get_header();
 }
 
+[[nodiscard]] static
 auto get_header(const scope_ma_decoder* decoder, get_header_options options = {}) -> header {
 	return decoder->get_header(options);
 }
@@ -466,6 +482,10 @@ auto byte_input_stream::seek(int64_t offset, std::ios::seekdir mode) -> bool {
 	return true;
 }
 
+auto byte_input_stream::tellg() -> int64_t {
+	return static_cast<int64_t>(pos_);
+}
+
 //########################################################################################
 
 stream_bytes_from_fs_path::stream_bytes_from_fs_path(const std::filesystem::path& path)
@@ -542,6 +562,10 @@ auto stream_bytes_from_fs_path::seek(int64_t offset, std::ios::seekdir mode) -> 
 	}
 	file_.seekg(offset, mode);
 	return true;
+}
+
+auto stream_bytes_from_fs_path::tellg() -> int64_t {
+	return static_cast<int64_t>(file_.tellg());
 }
 
 //########################################################################################

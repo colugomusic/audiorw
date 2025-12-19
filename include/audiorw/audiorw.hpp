@@ -27,8 +27,9 @@ struct header {
 	// To force this to happen, use get_header({.frame_count_required = true }).
 	// Otherwise this will be unset for MP3s.
 	std::optional<ads::frame_count> frame_count;
-	int SR        = 44100;
-	int bit_depth = 32;
+	int SR               = 44100;
+	int bit_depth        = 32;
+	size_t stream_length = 0;
 };
 
 struct get_header_options { bool frame_count_required = false; };
@@ -54,14 +55,16 @@ private:
 };
 
 struct scope_ma_decoder {
-	scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, audiorw::format format);
+	scope_ma_decoder(ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, ma_decoder_tell_proc on_tell, void* user_data, audiorw::format format);
 	auto get_header(get_header_options options = {}) const -> header;
 	auto get_header(audiorw::format format, get_header_options options = {}) const -> header;
+	auto get_stream_length() const -> size_t { return stream_length_; }
 	auto read_pcm_frames(void* frames, ma_uint64 frame_count) -> ma_uint64;
 	auto seek_to_pcm_frame(ma_uint64 frame) -> ma_result;
 private:
 	using decoder_uptr = std::unique_ptr<ma_decoder, decltype(&ma_decoder_uninit)>;
 	decoder_uptr decoder_;
+	size_t stream_length_;
 };
 
 struct scope_wavpack_reader {
@@ -121,6 +124,7 @@ struct byte_input_stream {
 	auto push_back_byte(std::byte v) -> bool;
 	auto read_bytes(std::span<std::byte> buffer) -> size_t;
 	auto seek(int64_t offset, std::ios::seekdir mode) -> bool;
+	auto tellg() -> int64_t;
 private:
 	std::span<const std::byte> bytes_;
 	size_t pos_ = 0;
@@ -145,6 +149,7 @@ struct stream_bytes_from_fs_path {
 	auto push_back_byte(std::byte v) -> bool;
 	auto read_bytes(std::span<std::byte> buffer) -> size_t;
 	auto seek(int64_t offset, std::ios::seekdir mode) -> bool;
+	auto tellg() -> int64_t;
 private:
 	std::ifstream file_;
 	size_t total_bytes_read_ = 0;
@@ -348,6 +353,13 @@ auto ma_on_decoder_seek(ma_decoder* decoder, ma_int64 offset, ma_seek_origin ori
 	return stream.seek(offset, ma_to_std_seek_mode(origin)) ? MA_SUCCESS : MA_ERROR;
 }
 
+template <concepts::byte_input_stream Stream> [[nodiscard]]
+auto ma_on_decoder_tell(ma_decoder* decoder, ma_int64* cursor) -> ma_result {
+	auto& stream = *reinterpret_cast<Stream*>(decoder->pUserData);
+	*cursor = stream.tellg();
+	return MA_SUCCESS;
+}
+
 template <concepts::byte_output_stream Stream> [[nodiscard]]
 auto ma_on_encoder_write(ma_encoder* encoder, const void* buffer, size_t bytes_to_write, size_t* bytes_written) -> ma_result {
 	auto& stream = *reinterpret_cast<Stream*>(encoder->pUserData);
@@ -523,8 +535,8 @@ auto wavpack_write(const audiorw::header& header, concepts::frame_input_stream a
 }
 
 [[nodiscard]]
-auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, void* user_data, concepts::should_abort_fn auto should_abort) -> try_read_result {
-	auto decoder = scope_ma_decoder{on_read, on_seek, user_data, format};
+auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format, ma_decoder_read_proc on_read, ma_decoder_seek_proc on_seek, ma_decoder_tell_proc on_tell, void* user_data, concepts::should_abort_fn auto should_abort) -> try_read_result {
+	auto decoder = scope_ma_decoder{on_read, on_seek, on_tell, user_data, format};
 	const auto header = decoder.get_header(format, {.frame_count_required = true});
 	out->write_header(header);
 	auto buffer           = std::vector<float>{};
@@ -552,7 +564,7 @@ auto ma_try_read(concepts::item_output_stream auto* out, audiorw::format format,
 [[nodiscard]]
 auto ma_try_read(concepts::byte_input_stream auto* in, concepts::item_output_stream auto* out, audiorw::format format, concepts::should_abort_fn auto should_abort) -> try_read_result {
 	using InStream = std::remove_reference_t<decltype(*in)>;
-	try         { return ma_try_read(out, format, ma_on_decoder_read<InStream>, ma_on_decoder_seek<InStream>, in, should_abort); }
+	try         { return ma_try_read(out, format, ma_on_decoder_read<InStream>, ma_on_decoder_seek<InStream>, ma_on_decoder_tell<InStream>, in, should_abort); }
 	catch (...) { return try_read_result::fail; }
 }
 
@@ -663,7 +675,7 @@ auto try_make_wavpack_decoder(concepts::byte_input_stream auto* in) -> std::uniq
 [[nodiscard]]
 auto try_make_ma_decoder(concepts::byte_input_stream auto* in, audiorw::format format) -> std::unique_ptr<detail::decoder> {
 	using Stream = std::remove_reference_t<decltype(*in)>;
-	try         { return std::make_unique<detail::decoder>(scope_ma_decoder{ma_on_decoder_read<Stream>, ma_on_decoder_seek<Stream>, in, format}); }
+	try         { return std::make_unique<detail::decoder>(scope_ma_decoder{ma_on_decoder_read<Stream>, ma_on_decoder_seek<Stream>, ma_on_decoder_tell<Stream>, in, format}); }
 	catch (...) { return nullptr; }
 }
 
