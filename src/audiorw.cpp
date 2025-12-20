@@ -462,6 +462,10 @@ auto byte_input_stream::get_pos() -> size_t {
 	return pos_;
 }
 
+auto byte_input_stream::get_total_bytes_read() const -> size_t {
+	return total_bytes_read_;
+}
+
 auto byte_input_stream::push_back_byte(std::byte v) -> bool {
 	pos_--;
 	return true;
@@ -473,7 +477,8 @@ auto byte_input_stream::read_bytes(std::span<std::byte> buffer) -> size_t {
 	const auto beg = bytes_.data() + pos_;
 	const auto end = beg + n;
 	std::copy(beg, end, buffer.data());
-	pos_ += n;
+	pos_              += n;
+	total_bytes_read_ += n;
 	return n;
 }
 
@@ -582,6 +587,10 @@ stream_item_from_bytes::stream_item_from_bytes(std::span<const std::byte> bytes,
 
 auto stream_item_from_bytes::get_header(get_header_options options) const -> header {
 	return detail::get_header(decoder_.get(), options);
+}
+
+auto stream_item_from_bytes::get_total_bytes_read() const -> size_t {
+	return in_->get_total_bytes_read();
 }
 
 auto stream_item_from_bytes::read_frames(std::span<float> buffer) -> ads::frame_count {

@@ -121,6 +121,7 @@ struct byte_input_stream {
 	auto close() -> bool;
 	auto get_length() -> std::optional<size_t>;
 	auto get_pos() -> size_t;
+	auto get_total_bytes_read() const -> size_t;
 	auto push_back_byte(std::byte v) -> bool;
 	auto read_bytes(std::span<std::byte> buffer) -> size_t;
 	auto seek(int64_t offset, std::ios::seekdir mode) -> bool;
@@ -128,16 +129,7 @@ struct byte_input_stream {
 private:
 	std::span<const std::byte> bytes_;
 	size_t pos_ = 0;
-};
-
-struct stream_item_from_bytes {
-	stream_item_from_bytes(std::span<const std::byte> bytes, format_hint hint);
-	auto get_header(get_header_options = {}) const -> header;
-	auto read_frames(std::span<float> buffer) -> ads::frame_count;
-	auto seek(ads::frame_idx pos) -> bool;
-private:
-	std::unique_ptr<detail::decoder> decoder_;
-	std::unique_ptr<byte_input_stream> in_;
+	size_t total_bytes_read_ = 0;
 };
 
 struct stream_bytes_from_fs_path {
@@ -162,6 +154,17 @@ struct stream_bytes_to_fs_path {
 	auto write_bytes(std::span<const std::byte> buffer) -> size_t;
 private:
 	detail::atomic_file_writer writer_;
+};
+
+struct stream_item_from_bytes {
+	stream_item_from_bytes(std::span<const std::byte> bytes, format_hint hint);
+	auto get_header(get_header_options = {}) const -> header;
+	auto get_total_bytes_read() const -> size_t;
+	auto read_frames(std::span<float> buffer) -> ads::frame_count;
+	auto seek(ads::frame_idx pos) -> bool;
+private:
+	std::unique_ptr<detail::decoder> decoder_;
+	std::unique_ptr<byte_input_stream> in_;
 };
 
 struct stream_item_from_fs_path {
@@ -259,6 +262,15 @@ requires(T x, std::span<const std::byte> buffer) {
 	{ x.commit() } -> std::same_as<void>;
 	{ x.seek(int64_t{}, std::ios::seekdir{}) } -> std::same_as<bool>;
 	{ x.write_bytes(buffer) } -> std::same_as<size_t>;
+};
+
+template <typename T>
+concept item_input_stream =
+requires(T x, std::span<float> buffer) {
+	{ x.get_header(get_header_options{}) } -> std::same_as<header>;
+	{ x.get_total_bytes_read() } -> std::same_as<size_t>;
+	{ x.read_frames(buffer) } -> std::same_as<ads::frame_count>;
+	{ x.seek(ads::frame_idx{}) } -> std::same_as<bool>;
 };
 
 template <typename T>
