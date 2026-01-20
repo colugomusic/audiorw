@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 #define NOMINMAX
 #define MINIAUDIO_IMPLEMENTATION
 #include "audiorw.hpp"
@@ -28,6 +29,44 @@ auto make_format_info_table() -> format_info_table {
 }
 
 static constexpr auto FORMAT_INFO = make_format_info_table();
+
+static
+// Useful for file operations on Windows because processes that have
+// already died may still have file handles open which completely
+// messes with our mental model of control flow. Thanks Windows!!!!!
+auto try_operation_until_it_works(auto op, uint32_t retries, std::chrono::milliseconds fail_sleep_time) -> bool {
+	uint32_t attempt = 0;
+	while (attempt < retries) {
+		std::error_code ec;
+		op(ec);
+		if (!ec) {
+			return true;
+		}
+		attempt++;
+		std::this_thread::sleep_for(fail_sleep_time);
+	}
+	return false;
+}
+
+static
+auto remove(const std::filesystem::path& path, uint32_t retries, std::chrono::milliseconds fail_sleep_time) -> void {
+	auto op = [path](std::error_code& ec) {
+		std::filesystem::remove(path, ec);
+	};
+	if (!try_operation_until_it_works(op, retries, fail_sleep_time)) {
+		// FIXME: Report the fact that we failed to delete the file?
+	}
+}
+
+static
+auto rename(const std::filesystem::path& old_path, const std::filesystem::path& new_path, uint32_t retries, std::chrono::milliseconds fail_sleep_time) -> void {
+	auto op = [old_path, new_path](std::error_code& ec) {
+		std::filesystem::rename(old_path, new_path, ec);
+	};
+	if (!try_operation_until_it_works(op, retries, fail_sleep_time)) {
+		// FIXME: Report the fact that we failed to rename the file?
+	}
+}
 
 [[nodiscard]] static
 auto get_bit_depth(ma_format format) -> int {
@@ -70,7 +109,7 @@ atomic_file_writer::~atomic_file_writer() {
 	try {
 		if (file_ && !commit_flag_) {
 			file_.close();
-			std::filesystem::remove(tmp_path_);
+			remove(tmp_path_, 10, std::chrono::milliseconds(100));
 		}
 	}
 	catch (...) {}
@@ -80,7 +119,7 @@ auto atomic_file_writer::commit() -> void {
 	if (!commit_flag_) {
 		file_.flush();
 		file_.close();
-		std::filesystem::rename(tmp_path_, path_);
+		rename(tmp_path_, path_, 10, std::chrono::milliseconds(100));
 		commit_flag_ = true;
 	}
 }
