@@ -746,7 +746,7 @@ auto write(const audiorw::header& header, concepts::frame_input_stream auto* in,
 }
 
 auto write(const audiorw::item& item, const std::filesystem::path& path, storage_type type, concepts::should_abort_fn auto should_abort) -> operation_result {
-	auto in  = audiorw::stream::frames::from(&item);
+	auto in  = audiorw::stream::frames::from(item);
 	auto out = audiorw::stream::bytes::to(path);
 	return write(item.header, &in, &out, type, should_abort);
 }
