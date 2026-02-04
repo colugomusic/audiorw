@@ -443,11 +443,13 @@ auto ma_write(const audiorw::header& header, concepts::frame_input_stream auto* 
 	// is closed. (miniaudio will try to keep writing to the file when the encoder is uninitialized.)
 	{
 		assert (header.frame_count);
-		auto config           = ma_encoder_config_init(to_ma_encoding_format(header.format), to_ma_format(header.bit_depth, type), header.channel_count.value, header.SR);
-		auto encoder          = scope_ma_encoder{ma_on_encoder_write<OutStream>, ma_on_encoder_seek<OutStream>, out, config};
-		auto sample_buffer    = std::vector<float>{};
-		auto frames_remaining = header.frame_count.value();
-		auto pos              = 0;
+		const auto output_format = to_ma_format(header.bit_depth, type);
+		auto config              = ma_encoder_config_init(to_ma_encoding_format(header.format), output_format, header.channel_count.value, header.SR);
+		auto encoder             = scope_ma_encoder{ma_on_encoder_write<OutStream>, ma_on_encoder_seek<OutStream>, out, config};
+		auto sample_buffer       = std::vector<float>{};
+		auto convert_buffer      = std::vector<std::byte>{}; // Used if we need to convert to an integer format.
+		auto frames_remaining    = header.frame_count.value();
+		auto pos                 = 0;
 		while (frames_remaining > 0UL) {
 			if (should_abort()) {
 				return operation_result::abort;
@@ -459,7 +461,15 @@ auto ma_write(const audiorw::header& header, concepts::frame_input_stream auto* 
 			if (frames_read != frames_to_process) {
 				throw std::runtime_error{"Error reading frames"};
 			}
-			const auto frames_written = encoder.write_pcm_frames(sample_buffer.data(), frames_to_process);
+			const void* write_ptr = sample_buffer.data();
+			// Convert float samples to target format if needed
+			if (output_format != ma_format_f32) {
+				const auto bytes_per_sample = ma_get_bytes_per_sample(output_format);
+				convert_buffer.resize(samples_to_process * bytes_per_sample);
+				ma_pcm_convert(convert_buffer.data(), output_format, sample_buffer.data(), ma_format_f32, samples_to_process, ma_dither_mode_triangle);
+				write_ptr = convert_buffer.data();
+			}
+			const auto frames_written = encoder.write_pcm_frames(write_ptr, frames_to_process);
 			if (frames_written != frames_to_process) {
 				throw std::runtime_error{"Error writing PCM frames"};
 			}
