@@ -616,12 +616,8 @@ auto stream_bytes_from_fs_path::tellg() -> int64_t {
 
 stream_item_from_bytes::stream_item_from_bytes(std::span<const std::byte> bytes, format_hint hint)
 	: in_{std::make_unique<byte_input_stream>(bytes)}
+	, decoder_{detail::make_decoder(in_.get(), hint)}
 {
-	// NOTE: C++ Foot-Gun alert
-	// We don't use the initializer list to intialize this.
-	// Decoder has to come before the byte stream in the member variables so that
-	// it is destructed first, but the byte stream needs to be initialized first.
-	decoder_ = detail::make_decoder(in_.get(), hint);
 }
 
 auto stream_item_from_bytes::get_header(get_header_options options) const -> header {
@@ -644,8 +640,8 @@ auto stream_item_from_bytes::seek(ads::frame_idx pos) -> bool {
 
 stream_item_from_fs_path::stream_item_from_fs_path(const std::filesystem::path& path, format_hint hint)
 	: in_{std::make_unique<stream_bytes_from_fs_path>(path)}
+	, decoder_{detail::make_decoder(in_.get(), hint)}
 {
-	decoder_ = detail::make_decoder(in_.get(), hint);
 }
 
 auto stream_item_from_fs_path::get_header(get_header_options options) const -> header {

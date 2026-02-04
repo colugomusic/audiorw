@@ -76,8 +76,8 @@ struct scope_wavpack_reader {
 	auto context() { return context_; }
 	auto mode() const { return mode_; }
 private:
-	WavpackContext* context_ = nullptr;
 	std::unique_ptr<WavpackStreamReader64> stream_reader_;
+	WavpackContext* context_ = nullptr;
 	header header_;
 	int mode_ = 0;
 };
@@ -163,8 +163,8 @@ struct stream_item_from_bytes {
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
-	std::unique_ptr<detail::decoder> decoder_;
 	std::unique_ptr<byte_input_stream> in_;
+	std::unique_ptr<detail::decoder> decoder_;
 };
 
 struct stream_item_from_fs_path {
@@ -174,8 +174,8 @@ struct stream_item_from_fs_path {
 	auto read_frames(std::span<float> buffer) -> ads::frame_count;
 	auto seek(ads::frame_idx pos) -> bool;
 private:
-	std::unique_ptr<detail::decoder> decoder_;
 	std::unique_ptr<stream_bytes_from_fs_path> in_;
+	std::unique_ptr<detail::decoder> decoder_;
 };
 
 struct stream_frames_from_item {
