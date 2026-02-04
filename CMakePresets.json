@@ -2,62 +2,23 @@
 	"version": 10,
 	"configurePresets": [
 		{
-			"name": "ninja-msvc",
-			"displayName": "Ninja (MSVC)",
-			"generator": "Ninja Multi-Config",
-			"binaryDir": "z:/dv/_bld/audiorw-ninja-msvc",
+			"name": "cfg-base",
+			"hidden": true,
 			"cacheVariables": {
-				"BUILD_TESTING": "ON",
 				"CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-				"CMAKE_C_COMPILER": "cl.exe",
-				"CMAKE_CXX_COMPILER": "cl.exe",
-				"CMAKE_CXX_STANDARD": "20",
-				"CMAKE_CXX_STANDARD_REQUIRED": "ON",
-				"CMAKE_PREFIX_PATH": "z:/dv/blockhead-deps/install",
-				"ADS_BUILD_TESTS": "ON"
+				"CMAKE_POSITION_INDEPENDENT_CODE": "ON"
 			}
 		},
 		{
-			"name": "vs",
-			"displayName": "Visual Studio 2022",
-			"generator": "Visual Studio 17 2022",
-			"binaryDir": "z:/dv/_bld/audiorw-vs",
+			"name": "cfg-windows-ninja-cl",
+			"displayName": "Windows: Ninja (cl.exe)",
+			"hidden": true,
+			"inherits": "cfg-base",
+			"generator": "Ninja",
 			"cacheVariables": {
 				"BUILD_TESTING": "ON",
-				"CMAKE_C_COMPILER": "cl.exe",
-				"CMAKE_CXX_COMPILER": "cl.exe",
-				"CMAKE_CXX_STANDARD": "20",
-				"CMAKE_CXX_STANDARD_REQUIRED": "ON",
-				"CMAKE_PREFIX_PATH": "z:/dv/blockhead-deps/install"
+				"CMAKE_TOOLCHAIN_FILE": "toolchain-windows-cl.cmake"
 			}
-		}
-	],
-	"buildPresets": [
-		{
-			"name": "ninja-msvc-debug",
-			"displayName": "Ninja (MSVC) Debug",
-			"configurePreset": "ninja-msvc",
-			"configuration": "Debug"
-		},
-		{
-			"name": "ninja-msvc-relwithdebinfo",
-			"displayName": "Ninja (MSVC) RelWithDebInfo",
-			"configurePreset": "ninja-msvc",
-			"configuration": "RelWithDebInfo"
-		},
-		{
-			"name": "vs-debug",
-			"displayName": "Visual Studio Debug",
-			"configurePreset": "vs",
-			"configuration": "Debug"
-		}
-	],
-	"testPresets": [
-		{
-			"name": "vs-debug",
-			"displayName": "Run audiorw Tests",
-			"configurePreset": "vs",
-			"configuration": "Debug"
 		}
 	]
 }
