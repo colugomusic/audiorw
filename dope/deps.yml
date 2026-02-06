@@ -1,5 +1,6 @@
 - name:                ads
   git:                 https://github.com/colugomusic/ads.git
+  track:               true
 
 - name:                Boost
   url:                 https://github.com/boostorg/boost/releases/download/boost-1.86.0/boost-1.86.0-cmake.zip
