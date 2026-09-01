@@ -8,7 +8,7 @@
 			"inherits": "cfg-windows-ninja-cl",
 			"cacheVariables": {
 				"CMAKE_BUILD_TYPE":  "Debug",
-				"CMAKE_PREFIX_PATH": "z:/dv/blockhead-deps/install/Debug"
+				"CMAKE_PREFIX_PATH": "z:/dv/blockhead-deps/install/dbg"
 			}
 		}
 	],
