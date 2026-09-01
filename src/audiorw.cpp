@@ -416,6 +416,7 @@ auto stream_read_int_frames(scope_wavpack_reader* stream, std::span<float> buffe
 }
 
 auto read_frames(scope_wavpack_reader* decoder, std::span<float> buffer) -> ads::frame_count {
+	if (buffer.empty()) { return {}; }
 	const auto float_mode = (decoder->mode() & MODE_FLOAT) == MODE_FLOAT;
 	if (float_mode) { return stream_read_float_frames(decoder, buffer); }
 	else            { return stream_read_int_frames(decoder, buffer); }
@@ -436,6 +437,7 @@ auto get_header(const scope_ma_decoder* decoder, get_header_options options = {}
 }
 
 auto read_frames(scope_ma_decoder* decoder, std::span<float> buffer) -> ads::frame_count {
+	if (buffer.empty()) { return {}; }
 	const auto header         = get_header(decoder);
 	const auto frames_to_read = buffer.size() / header.channel_count.value;
 	return {decoder->read_pcm_frames(buffer.data(), frames_to_read)};
