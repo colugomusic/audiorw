@@ -3,10 +3,16 @@ project(audiorw)
 enable_testing()
 find_package(ads REQUIRED)
 find_package(Boost REQUIRED COMPONENTS headers CONFIG)
-find_package(miniaudio REQUIRED)
 find_package(wavpack REQUIRED)
 add_library(audiorw)
 add_library(audiorw::audiorw ALIAS audiorw)
+add_library(miniaudio INTERFACE)
+add_library(miniaudio::miniaudio ALIAS miniaudio)
+target_sources(miniaudio PUBLIC
+	FILE_SET  HEADERS
+	BASE_DIRS src/extern
+	FILES     src/extern/miniaudio.h
+)
 target_sources(audiorw PUBLIC
 	FILE_SET HEADERS
 	BASE_DIRS
@@ -46,6 +52,8 @@ if (BUILD_TESTING)
 	add_subdirectory(test)
 endif()
 include(CMakePackageConfigHelpers)
+install(TARGETS miniaudio EXPORT miniaudio FILE_SET HEADERS)
+install(EXPORT miniaudio FILE miniaudioConfig.cmake NAMESPACE miniaudio:: DESTINATION lib/cmake/miniaudio)
 install(TARGETS audiorw EXPORT audiorw-targets FILE_SET HEADERS DESTINATION include/audiorw)
 install(EXPORT audiorw-targets FILE audiorw-targets.cmake NAMESPACE audiorw:: DESTINATION lib/cmake/audiorw)
 configure_package_config_file(
